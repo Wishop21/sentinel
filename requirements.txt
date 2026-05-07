@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+httpx
+websockets
+skyfield
+pandas
+pyarrow
+polars
+apscheduler
+python-dotenv
+pydantic
+pydantic-settings
+aiosqlite
+numpy

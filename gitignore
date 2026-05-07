@@ -1,0 +1,40 @@
+# Environment & credentials — NEVER commit these
+.env
+*.env
+
+# Data files — too large for git, regenerated on startup
+data/raw/
+data/metrics/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node / React (Stage 2)
+node_modules/
+frontend/dist/
+frontend/.env
+
+# Skyfield downloads
+.cache/
+finals2000A.all
+*.bsp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
