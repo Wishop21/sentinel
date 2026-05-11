@@ -7,7 +7,6 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-import math
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,6 +60,7 @@ app.add_middleware(
 
 @app.get("/api/live/aircraft")
 async def live_aircraft():
+    import math
     from backend.ingest.aircraft import fetch_aircraft
     df = await fetch_aircraft()
     if df is None:
@@ -69,7 +69,7 @@ async def live_aircraft():
     cols = ["icao24", "callsign", "origin_country", "lat", "lon",
             "baro_altitude", "velocity", "true_track", "on_ground",
             "classification", "confidence"]
-    
+
     records = []
     for row in df[cols].to_dict(orient="records"):
         clean = {
@@ -156,6 +156,43 @@ async def analytics_region(query: RegionQuery):
         "received_coordinates": len(query.coordinates),
         "domain": query.domain,
     }
+
+
+# ── Stage 3 Analytics endpoints ───────────────────────────────────────────
+
+@app.get("/api/analytics/countries")
+async def analytics_countries(
+    domain: str = Query("aircraft", description="aircraft | vessel | satellite"),
+    limit: int = Query(15, ge=5, le=50),
+    hours: int = Query(1, ge=1, le=24),
+):
+    """Top countries by asset count, averaged over last `hours`."""
+    from backend.analytics.regional import get_country_breakdown
+    data = await get_country_breakdown(domain=domain, limit=limit, hours=hours)
+    if not data:
+        return {"domain": domain, "note": "Insufficient data — accumulates over time", "data": []}
+    return {"domain": domain, "hours": hours, "data": data}
+
+
+@app.get("/api/analytics/trends")
+async def analytics_trends(
+    domain: str = Query(None),
+    hours: int = Query(24, ge=1, le=168),
+):
+    """Time-series trend data for sparklines."""
+    from backend.analytics.regional import get_global_trends, get_all_trends
+    if domain:
+        data = await get_global_trends(domain=domain, hours=hours)
+        return {"domain": domain, "hours": hours, "data": data}
+    summary = await get_all_trends()
+    return {"summary": summary}
+
+
+@app.get("/api/analytics/summary")
+async def analytics_summary():
+    """Trend summary for all domains — current vs 1h and 24h averages."""
+    from backend.analytics.regional import get_all_trends
+    return await get_all_trends()
 
 
 # ── Data quality endpoint ──────────────────────────────────────────────────
