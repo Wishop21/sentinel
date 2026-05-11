@@ -1,15 +1,25 @@
 /**
  * SENTINEL — Globe
- * deck.gl WebGL globe with world base layer, aircraft, vessels, satellites.
- * Features: altitude-based colour coding, camera HUD, orbit paths, click-to-focus
+ * Features:
+ *   - Directional aircraft icons (rotated by true_track)
+ *   - Military vs civilian aircraft distinction
+ *   - Directional vessel icons (rotated by heading)
+ *   - Fading trail lines for aircraft and vessels
+ *   - Satellite cross icons (no rotation)
+ *   - Altitude-based colour coding on aircraft
+ *   - Orbit paths on focused satellite
+ *   - Camera HUD (lat/lon/altitude)
+ *   - Click-to-focus with dimming
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
-import { ScatterplotLayer, SolidPolygonLayer, LineLayer } from '@deck.gl/layers'
+import { ScatterplotLayer, LineLayer, IconLayer } from '@deck.gl/layers'
+import { SolidPolygonLayer } from '@deck.gl/layers'
 import { _GlobeView as GlobeView } from '@deck.gl/core'
 import * as satellite from 'satellite.js'
 import useStore from '../store'
+import { ICON_ATLAS, getAircraftIcon, getAircraftColor, getVesselColor } from '../layers/icons'
 
 // ── Constants ────────────────────────────────────────────────
 const INITIAL_VIEW_STATE = {
@@ -18,35 +28,22 @@ const INITIAL_VIEW_STATE = {
   zoom: 0.8,
 }
 
-const COLORS = {
-  aircraft:  [245, 166, 35],
-  vessel:    [0,   212, 212],
-  satellite: [168, 85,  247],
-}
-
 // ── Camera HUD ───────────────────────────────────────────────
 function CameraHUD({ viewState }) {
-  const lat  = viewState?.latitude?.toFixed(4)  ?? '—'
-  const lon  = viewState?.longitude?.toFixed(4) ?? '—'
+  const lat   = viewState?.latitude?.toFixed(4)  ?? '—'
+  const lon   = viewState?.longitude?.toFixed(4) ?? '—'
   const altKm = Math.round(40000 / Math.pow(2, viewState?.zoom ?? 0))
 
   return (
     <div style={{
-      position: 'absolute',
-      bottom: 24,
-      left: 280,
-      fontFamily: 'var(--font-mono)',
-      fontSize: 11,
+      position: 'absolute', bottom: 24, left: 280,
+      fontFamily: 'var(--font-mono)', fontSize: 11,
       color: 'var(--text-secondary)',
       background: 'rgba(8, 12, 20, 0.7)',
       border: '1px solid var(--border-dim)',
-      borderRadius: 'var(--radius)',
-      padding: '6px 12px',
-      display: 'flex',
-      gap: 20,
-      backdropFilter: 'blur(8px)',
-      pointerEvents: 'none',
-      zIndex: 10,
+      borderRadius: 'var(--radius)', padding: '6px 12px',
+      display: 'flex', gap: 20,
+      backdropFilter: 'blur(8px)', pointerEvents: 'none', zIndex: 10,
     }}>
       <span><span style={{ color: 'var(--text-dim)', marginRight: 5 }}>LAT</span>{lat}°</span>
       <span><span style={{ color: 'var(--text-dim)', marginRight: 5 }}>LON</span>{lon}°</span>
@@ -55,7 +52,7 @@ function CameraHUD({ viewState }) {
   )
 }
 
-// ── Orbit path computation ───────────────────────────────────
+// ── Orbit computation ────────────────────────────────────────
 function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
   try {
     const satrec = satellite.twoline2satrec(tle1, tle2)
@@ -75,9 +72,27 @@ function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
       }
     }
     return points
-  } catch {
-    return []
+  } catch { return [] }
+}
+
+// ── Build trail segments from position history ────────────────
+function buildTrails(historyMap, alpha = 180) {
+  const segments = []
+  for (const [id, positions] of historyMap) {
+    if (positions.length < 2) continue
+    for (let i = 1; i < positions.length; i++) {
+      const prev = positions[i - 1]
+      const curr = positions[i]
+      // Fade: older segments are more transparent
+      const fade = i / positions.length
+      segments.push({
+        from:  [prev.lon, prev.lat, prev.alt ?? 0],
+        to:    [curr.lon, curr.lat, curr.alt ?? 0],
+        alpha: Math.round(fade * alpha),
+      })
+    }
   }
+  return segments
 }
 
 // ── Main Globe component ─────────────────────────────────────
@@ -92,11 +107,9 @@ export default function Globe() {
   const rawSatellites  = useStore(s => s.satellites)
   const classFilter    = useStore(s => s.classificationFilter)
   const satGroupFilter = useStore(s => s.satelliteGroupFilter)
+  const posHistory     = useStore(s => s.positionHistory)
 
-  // Camera view state for HUD
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
-
-  // World GeoJSON for base layer
   const [worldData, setWorldData] = useState(null)
 
   // Filtered data
@@ -131,8 +144,8 @@ export default function Globe() {
   }, [clearFocus])
 
   const isFocused = !!focusedAsset
-  const dimAlpha  = 25
-  const fullAlpha = 210
+  const dimAlpha  = 20
+  const fullAlpha = 220
 
   const handleClick = useCallback((info, type) => {
     if (!info.object) return
@@ -160,74 +173,120 @@ export default function Globe() {
       getFillColor: [22, 33, 50],
       getLineColor: [42, 63, 95],
       lineWidthMinPixels: 0.5,
-      stroked: true,
-      filled: true,
-      pickable: false,
+      stroked: true, filled: true, pickable: false,
     })
   }, [worldData])
 
-  // ── Aircraft layer (altitude-based colour) ────────────────
+  // ── Aircraft trail layer ──────────────────────────────────
+  const aircraftTrailLayer = useMemo(() => {
+    if (!layers_toggle.aircraft || isFocused) return null
+    const segments = buildTrails(posHistory.aircraft, 140)
+    if (!segments.length) return null
+    return new LineLayer({
+      id: 'aircraft-trails',
+      data: segments,
+      getSourcePosition: d => d.from,
+      getTargetPosition: d => d.to,
+      getColor: d => [245, 166, 35, d.alpha],
+      getWidth: 1,
+      widthMinPixels: 1,
+      pickable: false,
+    })
+  }, [posHistory.aircraft, layers_toggle.aircraft, isFocused])
+
+  // ── Aircraft icon layer ───────────────────────────────────
   const aircraftLayer = useMemo(() => {
     if (!layers_toggle.aircraft || !aircraft.length) return null
-    return new ScatterplotLayer({
+    return new IconLayer({
       id: 'aircraft',
       data: aircraft,
-      getPosition: d => [d.lon ?? 0, d.lat ?? 0, (d.baro_altitude ?? 0)],
-      getRadius: 30000,
-      getFillColor: d => {
+      getPosition: d => [d.lon ?? 0, d.lat ?? 0, d.baro_altitude ?? 0],
+      getIcon: d => ({
+        ...ICON_ATLAS[getAircraftIcon(d)],
+      }),
+      getSize: 20,
+      getAngle: d => -(d.true_track ?? 0),  // deck.gl angle is counter-clockwise
+      getColor: d => {
+        const base = getAircraftColor(d)
         const alpha = isFocused ? (focusedAsset?.id === d.icao24 ? fullAlpha : dimAlpha) : fullAlpha
-        const alt = d.baro_altitude ?? 0
-        const t = Math.min(Math.max(alt / 13000, 0), 1)
-        const r = Math.round(80  + t * (245 - 80))
-        const g = Math.round(100 + t * (166 - 100))
-        const b = Math.round(120 + t * (35  - 120))
-        return [r, g, b, alpha]
+        return [...base, alpha]
       },
       pickable: true,
       onClick: info => handleClick(info, 'aircraft'),
+      billboard: true,
+      alphaCutoff: 0.05,
       updateTriggers: {
-        getFillColor: [focusedAsset?.id, isFocused, aircraft],
-        getRadius: [focusedAsset?.id],
+        getColor: [focusedAsset?.id, isFocused],
+        getAngle: [aircraft],
       },
-      transitions: { getFillColor: 200 },
+      transitions: { getColor: 200 },
     })
   }, [aircraft, layers_toggle.aircraft, focusedAsset, isFocused, handleClick])
 
-  // ── Vessel layer ──────────────────────────────────────────
+  // ── Vessel trail layer ────────────────────────────────────
+  const vesselTrailLayer = useMemo(() => {
+    if (!layers_toggle.vessels || isFocused) return null
+    const segments = buildTrails(posHistory.vessels, 120)
+    if (!segments.length) return null
+    return new LineLayer({
+      id: 'vessel-trails',
+      data: segments,
+      getSourcePosition: d => d.from,
+      getTargetPosition: d => d.to,
+      getColor: d => [0, 212, 212, d.alpha],
+      getWidth: 1,
+      widthMinPixels: 1,
+      pickable: false,
+    })
+  }, [posHistory.vessels, layers_toggle.vessels, isFocused])
+
+  // ── Vessel icon layer ─────────────────────────────────────
   const vesselLayer = useMemo(() => {
     if (!layers_toggle.vessels || !vessels.length) return null
-    return new ScatterplotLayer({
+    return new IconLayer({
       id: 'vessels',
       data: vessels,
       getPosition: d => [d.lon ?? 0, d.lat ?? 0, 0],
-      getRadius: 40000,
-      getFillColor: d => {
+      getIcon: () => ({ ...ICON_ATLAS.ship }),
+      getSize: 18,
+      getAngle: d => -(d.heading ?? 0),
+      getColor: d => {
+        const base = getVesselColor(d)
         const alpha = isFocused ? (focusedAsset?.id === d.mmsi ? fullAlpha : dimAlpha) : fullAlpha
-        return [...COLORS.vessel, alpha]
+        return [...base, alpha]
       },
       pickable: true,
       onClick: info => handleClick(info, 'vessel'),
-      updateTriggers: { getFillColor: [focusedAsset?.id, isFocused] },
-      transitions: { getFillColor: 200 },
+      billboard: true,
+      alphaCutoff: 0.05,
+      updateTriggers: {
+        getColor: [focusedAsset?.id, isFocused],
+        getAngle: [vessels],
+      },
+      transitions: { getColor: 200 },
     })
   }, [vessels, layers_toggle.vessels, focusedAsset, isFocused, handleClick])
 
-  // ── Satellite layer ───────────────────────────────────────
+  // ── Satellite layer (ScatterplotLayer — no direction needed) ──
   const satelliteLayer = useMemo(() => {
     if (!layers_toggle.satellites || !satellites.length) return null
-    return new ScatterplotLayer({
+    return new IconLayer({
       id: 'satellites',
       data: satellites,
       getPosition: d => [d.lon ?? 0, d.lat ?? 0, (d.altitude_km ?? 0) * 1000],
-      getRadius: 50000,
-      getFillColor: d => {
+      getIcon: () => ({ ...ICON_ATLAS.satellite }),
+      getSize: 16,
+      getAngle: 0,
+      getColor: d => {
         const alpha = isFocused ? (focusedAsset?.id === d.name ? fullAlpha : dimAlpha) : fullAlpha
-        return [...COLORS.satellite, alpha]
+        return [168, 85, 247, alpha]
       },
       pickable: true,
       onClick: info => handleClick(info, 'satellite'),
-      updateTriggers: { getFillColor: [focusedAsset?.id, isFocused] },
-      transitions: { getFillColor: 200 },
+      billboard: true,
+      alphaCutoff: 0.05,
+      updateTriggers: { getColor: [focusedAsset?.id, isFocused] },
+      transitions: { getColor: 200 },
     })
   }, [satellites, layers_toggle.satellites, focusedAsset, isFocused, handleClick])
 
@@ -259,7 +318,15 @@ export default function Globe() {
     })
   }, [orbitPath])
 
-  const deckLayers = [worldLayer, orbitLayer, aircraftLayer, vesselLayer, satelliteLayer].filter(Boolean)
+  const deckLayers = [
+    worldLayer,
+    aircraftTrailLayer,
+    vesselTrailLayer,
+    orbitLayer,
+    aircraftLayer,
+    vesselLayer,
+    satelliteLayer,
+  ].filter(Boolean)
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>

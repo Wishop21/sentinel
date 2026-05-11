@@ -1,9 +1,10 @@
 /**
  * SENTINEL — API data hooks
  * Polls the FastAPI backend and pushes data into the Zustand store.
+ * Also updates position history on each poll for trail rendering.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import useStore from '../store'
 
 const BASE = '/api'
@@ -16,13 +17,16 @@ async function fetchJSON(path) {
 
 // ── Aircraft — poll every 15s ─────────────────────────────────
 export function useAircraftData() {
-  const setAircraft = useStore(s => s.setAircraft)
+  const setAircraft          = useStore(s => s.setAircraft)
+  const updatePositionHistory = useStore(s => s.updatePositionHistory)
 
   useEffect(() => {
     const poll = async () => {
       try {
         const data = await fetchJSON('/live/aircraft')
-        setAircraft(data.data || [])
+        const aircraft = data.data || []
+        setAircraft(aircraft)
+        updatePositionHistory('aircraft', aircraft)
       } catch (e) {
         console.warn('Aircraft fetch failed:', e.message)
       }
@@ -54,13 +58,16 @@ export function useSatelliteData() {
 
 // ── Vessels — poll every 20s ──────────────────────────────────
 export function useVesselData() {
-  const setVessels = useStore(s => s.setVessels)
+  const setVessels           = useStore(s => s.setVessels)
+  const updatePositionHistory = useStore(s => s.updatePositionHistory)
 
   useEffect(() => {
     const poll = async () => {
       try {
         const data = await fetchJSON('/live/vessels')
-        setVessels(data.data || [])
+        const vessels = data.data || []
+        setVessels(vessels)
+        updatePositionHistory('vessels', vessels)
       } catch (e) {
         console.warn('Vessel fetch failed:', e.message)
       }
@@ -73,7 +80,7 @@ export function useVesselData() {
 
 // ── Metrics — poll every 60s ──────────────────────────────────
 export function useMetrics() {
-  const setMetrics = useStore(s => s.setMetrics)
+  const setMetrics     = useStore(s => s.setMetrics)
   const setDataQuality = useStore(s => s.setDataQuality)
 
   useEffect(() => {
