@@ -14,5 +14,9 @@ export default defineConfig({
   build: {
     outDir: '../frontend/dist',
     emptyOutDir: true,
+    target: 'esnext',
+    rollupOptions: {
+      output: { format: 'es' }
+    }
   }
 })

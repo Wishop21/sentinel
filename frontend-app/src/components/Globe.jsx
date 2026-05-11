@@ -1,16 +1,17 @@
 /**
  * SENTINEL — Globe
  * deck.gl WebGL globe with world base layer, aircraft, vessels, satellites.
+ * Features: altitude-based colour coding, camera HUD, orbit paths, click-to-focus
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
-import { ScatterplotLayer, SolidPolygonLayer } from '@deck.gl/layers'
+import { ScatterplotLayer, SolidPolygonLayer, LineLayer } from '@deck.gl/layers'
 import { _GlobeView as GlobeView } from '@deck.gl/core'
-import useStore from '../store'
 import * as satellite from 'satellite.js'
-import { LineLayer } from '@deck.gl/layers'
+import useStore from '../store'
 
+// ── Constants ────────────────────────────────────────────────
 const INITIAL_VIEW_STATE = {
   longitude: 0,
   latitude: 20,
@@ -23,28 +24,90 @@ const COLORS = {
   satellite: [168, 85,  247],
 }
 
+// ── Camera HUD ───────────────────────────────────────────────
+function CameraHUD({ viewState }) {
+  const lat  = viewState?.latitude?.toFixed(4)  ?? '—'
+  const lon  = viewState?.longitude?.toFixed(4) ?? '—'
+  const altKm = Math.round(40000 / Math.pow(2, viewState?.zoom ?? 0))
+
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 24,
+      left: 280,
+      fontFamily: 'var(--font-mono)',
+      fontSize: 11,
+      color: 'var(--text-secondary)',
+      background: 'rgba(8, 12, 20, 0.7)',
+      border: '1px solid var(--border-dim)',
+      borderRadius: 'var(--radius)',
+      padding: '6px 12px',
+      display: 'flex',
+      gap: 20,
+      backdropFilter: 'blur(8px)',
+      pointerEvents: 'none',
+      zIndex: 10,
+    }}>
+      <span><span style={{ color: 'var(--text-dim)', marginRight: 5 }}>LAT</span>{lat}°</span>
+      <span><span style={{ color: 'var(--text-dim)', marginRight: 5 }}>LON</span>{lon}°</span>
+      <span><span style={{ color: 'var(--text-dim)', marginRight: 5 }}>ALT</span>{altKm.toLocaleString()} km</span>
+    </div>
+  )
+}
+
+// ── Orbit path computation ───────────────────────────────────
+function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
+  try {
+    const satrec = satellite.twoline2satrec(tle1, tle2)
+    const points = []
+    const now = new Date()
+    for (let i = 0; i <= steps; i++) {
+      const t = new Date(now.getTime() + (i / steps) * minutesAhead * 60000)
+      const posVel = satellite.propagate(satrec, t)
+      if (!posVel.position) continue
+      const gmst = satellite.gstime(t)
+      const geo = satellite.eciToGeodetic(posVel.position, gmst)
+      const lon = satellite.degreesLong(geo.longitude)
+      const lat = satellite.degreesLat(geo.latitude)
+      const alt = geo.height * 1000
+      if (isFinite(lon) && isFinite(lat) && isFinite(alt)) {
+        points.push([lon, lat, alt])
+      }
+    }
+    return points
+  } catch {
+    return []
+  }
+}
+
+// ── Main Globe component ─────────────────────────────────────
 export default function Globe() {
   const layers_toggle   = useStore(s => s.layers)
   const focusedAsset    = useStore(s => s.focusedAsset)
   const setFocusedAsset = useStore(s => s.setFocusedAsset)
   const clearFocus      = useStore(s => s.clearFocus)
 
-  const rawAircraft        = useStore(s => s.aircraft)
-  const rawVessels         = useStore(s => s.vessels)
-  const rawSatellites      = useStore(s => s.satellites)
-  const classFilter        = useStore(s => s.classificationFilter)
-  const satGroupFilter     = useStore(s => s.satelliteGroupFilter)
+  const rawAircraft    = useStore(s => s.aircraft)
+  const rawVessels     = useStore(s => s.vessels)
+  const rawSatellites  = useStore(s => s.satellites)
+  const classFilter    = useStore(s => s.classificationFilter)
+  const satGroupFilter = useStore(s => s.satelliteGroupFilter)
 
-  const aircraft   = useMemo(() =>
+  // Camera view state for HUD
+  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
+
+  // World GeoJSON for base layer
+  const [worldData, setWorldData] = useState(null)
+
+  // Filtered data
+  const aircraft = useMemo(() =>
     classFilter ? rawAircraft.filter(a => (a.classification ?? 'unknown') === classFilter) : rawAircraft,
     [rawAircraft, classFilter]
   )
-
-  const vessels    = useMemo(() =>
+  const vessels = useMemo(() =>
     classFilter ? rawVessels.filter(v => (v.classification ?? 'unknown') === classFilter) : rawVessels,
     [rawVessels, classFilter]
   )
-
   const satellites = useMemo(() => {
     let result = rawSatellites
     if (classFilter)    result = result.filter(s => (s.classification ?? 'unknown') === classFilter)
@@ -52,35 +115,7 @@ export default function Globe() {
     return result
   }, [rawSatellites, classFilter, satGroupFilter])
 
-  // Orbit Computation Function
-  function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
-    try {
-      const satrec = satellite.twoline2satrec(tle1, tle2)
-      const points = []
-      const now = new Date()
-      
-      for (let i = 0; i <= steps; i++) {
-        const t = new Date(now.getTime() + (i / steps) * minutesAhead * 60000)
-        const posVel = satellite.propagate(satrec, t)
-        if (!posVel.position) continue
-        const gmst = satellite.gstime(t)
-        const geo = satellite.eciToGeodetic(posVel.position, gmst)
-        const lon = satellite.degreesLong(geo.longitude)
-        const lat = satellite.degreesLat(geo.latitude)
-        const alt = geo.height * 1000
-        if (isFinite(lon) && isFinite(lat) && isFinite(alt)) {
-          points.push([lon, lat, alt])
-        }
-      }
-      return points
-    } catch {
-      return []
-    }
-  }
-
-  // World GeoJSON for base layer
-  const [worldData, setWorldData] = useState(null)
-
+  // Fetch world GeoJSON once
   useEffect(() => {
     fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_land.geojson')
       .then(r => r.json())
@@ -110,7 +145,7 @@ export default function Globe() {
     })
   }, [setFocusedAsset])
 
-  // ── World base layer ─────────────────────────────────────
+  // ── World base layer ──────────────────────────────────────
   const worldLayer = useMemo(() => {
     if (!worldData) return null
     return new SolidPolygonLayer({
@@ -131,7 +166,7 @@ export default function Globe() {
     })
   }, [worldData])
 
-  // ── Aircraft layer ────────────────────────────────────────
+  // ── Aircraft layer (altitude-based colour) ────────────────
   const aircraftLayer = useMemo(() => {
     if (!layers_toggle.aircraft || !aircraft.length) return null
     return new ScatterplotLayer({
@@ -141,17 +176,11 @@ export default function Globe() {
       getRadius: 30000,
       getFillColor: d => {
         const alpha = isFocused ? (focusedAsset?.id === d.icao24 ? fullAlpha : dimAlpha) : fullAlpha
-        
-        // Altitude-based brightness: ground = dim, high altitude = full amber
         const alt = d.baro_altitude ?? 0
-        const maxAlt = 13000 // metres — typical cruise ceiling
-        const t = Math.min(Math.max(alt / maxAlt, 0), 1) // 0 to 1
-        
-        // Interpolate from dim blue-grey (ground) → full amber (cruise altitude)
-        const r = Math.round(80  + t * (245 - 80))   // 80 → 245
-        const g = Math.round(100 + t * (166 - 100))  // 100 → 166
-        const b = Math.round(120 + t * (35  - 120))  // 120 → 35
-        
+        const t = Math.min(Math.max(alt / 13000, 0), 1)
+        const r = Math.round(80  + t * (245 - 80))
+        const g = Math.round(100 + t * (166 - 100))
+        const b = Math.round(120 + t * (35  - 120))
         return [r, g, b, alpha]
       },
       pickable: true,
@@ -202,15 +231,13 @@ export default function Globe() {
     })
   }, [satellites, layers_toggle.satellites, focusedAsset, isFocused, handleClick])
 
-  // Orbit path for focused satellite
+  // ── Orbit path (focused satellite) ───────────────────────
   const orbitPath = useMemo(() => {
     if (!focusedAsset || focusedAsset.type !== 'satellite') return null
     const { tle1, tle2 } = focusedAsset.data
     if (!tle1 || !tle2) return null
     const points = computeOrbitPath(tle1, tle2)
     if (points.length < 2) return null
-    
-    // Build line segments from consecutive points
     const segments = []
     for (let i = 0; i < points.length - 1; i++) {
       segments.push({ from: points[i], to: points[i + 1] })
@@ -239,11 +266,13 @@ export default function Globe() {
       <DeckGL
         views={new GlobeView()}
         initialViewState={INITIAL_VIEW_STATE}
+        onViewStateChange={({ viewState: vs }) => setViewState(vs.globe ?? vs)}
         controller={true}
         layers={deckLayers}
         onClick={info => { if (!info.object) clearFocus() }}
         parameters={{ clearColor: [0.031, 0.047, 0.078, 1] }}
       />
+      <CameraHUD viewState={viewState} />
     </div>
   )
 }
