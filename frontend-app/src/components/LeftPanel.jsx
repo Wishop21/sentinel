@@ -135,6 +135,7 @@ function colorToRgb(color) {
     'var(--aircraft)':  '245, 166, 35',
     'var(--vessel)':    '0, 212, 212',
     'var(--satellite)': '168, 85, 247',
+    'var(--text-secondary)': '107, 132, 163',
   }
   return map[color] || '148, 163, 184'
 }
@@ -188,6 +189,7 @@ export default function LeftPanel() {
             />
           ))}
         </LayerToggle>
+        <LayerToggle domain="borders" label="Borders" color="var(--text-secondary)" />  
       </div>
 
       {/* Divider */}

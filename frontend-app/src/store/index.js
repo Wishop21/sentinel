@@ -17,6 +17,7 @@ const useStore = create((set, get) => ({
     aircraft:   true,
     vessels:    true,
     satellites: true,
+    borders:    true,
   },
 
   toggleLayer: (layer) => set(state => ({

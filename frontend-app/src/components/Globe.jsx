@@ -20,6 +20,7 @@ import { _GlobeView as GlobeView } from '@deck.gl/core'
 import * as satellite from 'satellite.js'
 import useStore from '../store'
 import { ICON_ATLAS, getAircraftIcon, getAircraftColor, getVesselColor } from '../layers/icons'
+import { GeoJsonLayer } from '@deck.gl/layers'
 
 // ── Constants ────────────────────────────────────────────────
 const INITIAL_VIEW_STATE = {
@@ -112,6 +113,15 @@ export default function Globe() {
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
   const [worldData, setWorldData] = useState(null)
 
+  const [bordersData, setBordersData] = useState(null)
+
+  useEffect(() => {
+    fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_boundary_lines_land.geojson')
+      .then(r => r.json())
+      .then(data => setBordersData(data.features))
+      .catch(e => console.warn('Borders GeoJSON fetch failed:', e))
+  }, [])
+
   // Filtered data
   const aircraft = useMemo(() =>
     classFilter ? rawAircraft.filter(a => (a.classification ?? 'unknown') === classFilter) : rawAircraft,
@@ -176,6 +186,22 @@ export default function Globe() {
       stroked: true, filled: true, pickable: false,
     })
   }, [worldData])
+
+  // ── Borders layer ──────────────────────────────────────
+  const bordersLayer = useMemo(() => {
+    if (!layers_toggle.borders || !bordersData) return null
+    return new GeoJsonLayer({
+      id: 'borders',
+      data: { type: 'FeatureCollection', features: bordersData },
+      stroked: true,
+      filled: false,
+      getLineColor: [60, 90, 130, 160],
+      getLineWidth: 1,
+      lineWidthMinPixels: 0.5,
+      lineWidthMaxPixels: 1.5,
+      pickable: false,
+    })
+  }, [bordersData, layers_toggle.borders])
 
   // ── Aircraft trail layer ──────────────────────────────────
   const aircraftTrailLayer = useMemo(() => {
@@ -320,6 +346,7 @@ export default function Globe() {
 
   const deckLayers = [
     worldLayer,
+    bordersLayer,
     aircraftTrailLayer,
     vesselTrailLayer,
     orbitLayer,
