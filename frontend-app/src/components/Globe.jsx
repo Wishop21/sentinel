@@ -141,11 +141,25 @@ export default function Globe() {
       getRadius: 30000,
       getFillColor: d => {
         const alpha = isFocused ? (focusedAsset?.id === d.icao24 ? fullAlpha : dimAlpha) : fullAlpha
-        return [...COLORS.aircraft, alpha]
+        
+        // Altitude-based brightness: ground = dim, high altitude = full amber
+        const alt = d.baro_altitude ?? 0
+        const maxAlt = 13000 // metres — typical cruise ceiling
+        const t = Math.min(Math.max(alt / maxAlt, 0), 1) // 0 to 1
+        
+        // Interpolate from dim blue-grey (ground) → full amber (cruise altitude)
+        const r = Math.round(80  + t * (245 - 80))   // 80 → 245
+        const g = Math.round(100 + t * (166 - 100))  // 100 → 166
+        const b = Math.round(120 + t * (35  - 120))  // 120 → 35
+        
+        return [r, g, b, alpha]
       },
       pickable: true,
       onClick: info => handleClick(info, 'aircraft'),
-      updateTriggers: { getFillColor: [focusedAsset?.id, isFocused] },
+      updateTriggers: {
+        getFillColor: [focusedAsset?.id, isFocused, aircraft],
+        getRadius: [focusedAsset?.id],
+      },
       transitions: { getFillColor: 200 },
     })
   }, [aircraft, layers_toggle.aircraft, focusedAsset, isFocused, handleClick])
