@@ -9,6 +9,8 @@ Files are columnar-compressed — expect ~80-90% size reduction vs CSV.
 
 Retention: a daily cleanup job deletes files older than RAW_RETENTION_DAYS.
 Missing snapshots are logged to the metrics DB for UI transparency.
+
+backend/storage/parquet.py
 """
 
 import logging

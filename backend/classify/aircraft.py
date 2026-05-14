@@ -18,6 +18,7 @@ Classification categories:
 
 This module is deliberately transparent about its limitations.
 Coverage gaps are expected, especially over regions with sparse ADS-B receivers.
+backend/classify/aircraft.py implements the classification logic.
 """
 
 import re

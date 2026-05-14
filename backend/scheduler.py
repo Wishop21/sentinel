@@ -3,12 +3,14 @@ SENTINEL — Background scheduler
 Manages all periodic ingestion and maintenance jobs.
 
 Schedule:
-  Every 15s  : fetch aircraft positions
+  Every 15s  : fetch aircraft positions → update live cache
   Every 10s  : propagate satellite positions (uses cached TLEs)
   Every 15min: snapshot vessels to Parquet, update metrics DB
   Every 15min: snapshot aircraft metrics to DB
-  Daily 00:05: fetch fresh TLE catalog
+  Daily 00:05: invalidate TLE cache and fetch fresh catalog
   Daily 00:10: run retention cleanup
+
+backend/scheduler.py
 """
 
 import asyncio
@@ -19,8 +21,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from backend.ingest.aircraft import ingest_aircraft
-from backend.ingest.satellites import ingest_satellites, fetch_tle_catalog
+from backend.ingest.aircraft import ingest_aircraft, fetch_aircraft
+from backend.ingest.satellites import ingest_satellites, fetch_tle_catalog, invalidate_tle_cache
 from backend.ingest.vessels import snapshot_vessels
 from backend.storage.parquet import run_retention_cleanup
 from backend.storage.metrics import upsert_global_counts, upsert_country_counts, record_snapshot_log
@@ -29,23 +31,34 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
-# In-memory satellite state — updated every 10s, served by live API endpoint
+# ── In-memory live caches ─────────────────────────────────────────────────
+# Both are updated by their respective scheduler jobs and read by the
+# live API endpoints. This avoids the live endpoints making direct upstream
+# API calls on every frontend poll.
+
+_aircraft_cache: list[dict] = []
 _satellite_cache: list[dict] = []
 
 
+def get_live_aircraft() -> list[dict]:
+    """Return the most recently ingested aircraft positions."""
+    return _aircraft_cache
+
+
 def get_live_satellites() -> list[dict]:
+    """Return the most recently propagated satellite positions."""
     return _satellite_cache
 
 
-async def _job_aircraft():
-    """Fetch aircraft, store snapshot, update metrics."""
-    try:
-        from backend.ingest.aircraft import fetch_aircraft
-        from backend.storage.parquet import save_snapshot
+# ── Scheduler jobs ────────────────────────────────────────────────────────
 
+async def _job_aircraft():
+    """Fetch aircraft, update live cache, store snapshot, update metrics."""
+    global _aircraft_cache
+    try:
         df = await fetch_aircraft()
         if df is not None:
-            await save_snapshot(df, domain="aircraft")
+            _aircraft_cache = df.to_dict(orient="records")
             await upsert_global_counts("aircraft", df)
             await upsert_country_counts("aircraft", df, country_col="origin_country")
             await record_snapshot_log("aircraft", received=True, record_count=len(df))
@@ -57,7 +70,7 @@ async def _job_aircraft():
 
 
 async def _job_satellites():
-    """Propagate satellite positions using cached TLEs."""
+    """Propagate satellite positions using cached TLEs, update live cache."""
     global _satellite_cache
     try:
         df = await ingest_satellites()
@@ -76,12 +89,14 @@ async def _job_vessel_snapshot():
 
 
 async def _job_tle_refresh():
-    """Refresh TLE catalog from CelesTrak."""
+    """
+    Invalidate the TLE cache and fetch a fresh catalog from CelesTrak.
+    Uses the explicit invalidate_tle_cache() function rather than mutating
+    module internals directly.
+    """
     try:
         logger.info("Refreshing TLE catalog...")
-        # Force cache invalidation by clearing timestamp
-        from backend.ingest import satellites as sat_module
-        sat_module._cache_timestamp = None
+        invalidate_tle_cache()
         await fetch_tle_catalog()
         logger.info("TLE catalog refreshed")
     except Exception as e:

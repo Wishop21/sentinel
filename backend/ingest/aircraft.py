@@ -6,9 +6,12 @@ Fetch interval: every 15 seconds
 OpenSky returns state vectors for all aircraft currently tracked.
 We use OAuth2 client credentials — get your free credentials at:
 https://opensky-network.org/index.php?option=com_opensky&view=credential
+
+backend/ingest/aircraft.py
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -52,11 +55,28 @@ OPENSKY_BASE_COLUMNS = [
 # Extended mode adds 'category' as column 18
 OPENSKY_EXTENDED_COLUMN = "category"
 
+# ── OAuth2 token cache ────────────────────────────────────────────────────
+# Tokens are cached until 30s before expiry to avoid per-poll token fetches.
+# OpenSky tokens typically have a 300–3600s TTL; we read `expires_in` from
+# the response and store the expiry wall-clock time.
+_cached_token: Optional[str] = None
+_token_expiry: float = 0.0  # Unix timestamp after which the token is invalid
+
 
 async def _get_opensky_token(client: httpx.AsyncClient) -> Optional[str]:
-    """Exchange client credentials for a bearer token via OAuth2."""
+    """
+    Return a valid bearer token, using the cache where possible.
+    Fetches a new token only when the cache is empty or within 30s of expiry.
+    """
+    global _cached_token, _token_expiry
+
+    # Return cached token if still valid
+    if _cached_token and time.time() < _token_expiry - 30:
+        return _cached_token
+
     if not settings.opensky_client_id or not settings.opensky_client_secret:
         return None
+
     try:
         resp = await client.post(
             OPENSKY_TOKEN_URL,
@@ -68,9 +88,17 @@ async def _get_opensky_token(client: httpx.AsyncClient) -> Optional[str]:
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["access_token"]
+        token_data = resp.json()
+        _cached_token = token_data["access_token"]
+        # expires_in is seconds from now; default to 300s if not present
+        expires_in = token_data.get("expires_in", 300)
+        _token_expiry = time.time() + expires_in
+        logger.debug(f"OpenSky token refreshed (expires in {expires_in}s)")
+        return _cached_token
     except Exception as e:
         logger.warning(f"OpenSky token fetch failed: {e} — falling back to anonymous")
+        _cached_token = None
+        _token_expiry = 0.0
         return None
 
 
@@ -82,7 +110,6 @@ async def fetch_aircraft() -> Optional[pd.DataFrame]:
     timestamp = datetime.now(timezone.utc)
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # Attempt OAuth2 auth; fall back to anonymous if unavailable
         headers = {}
         if settings.opensky_client_id and settings.opensky_client_secret:
             token = await _get_opensky_token(client)
@@ -110,6 +137,11 @@ async def fetch_aircraft() -> Optional[pd.DataFrame]:
             return None
         except httpx.HTTPStatusError as e:
             logger.error(f"OpenSky HTTP error: {e.response.status_code}")
+            # If 401, clear the token cache so the next poll re-authenticates
+            if e.response.status_code == 401:
+                global _cached_token, _token_expiry
+                _cached_token = None
+                _token_expiry = 0.0
             return None
         except Exception as e:
             logger.error(f"OpenSky fetch failed: {e}")
@@ -121,7 +153,6 @@ async def fetch_aircraft() -> Optional[pd.DataFrame]:
         return None
 
     # Build column list dynamically based on actual response width.
-    # This prevents breakage when OpenSky adds/removes columns in future.
     actual_col_count = len(states[0])
     columns = OPENSKY_BASE_COLUMNS.copy()
 

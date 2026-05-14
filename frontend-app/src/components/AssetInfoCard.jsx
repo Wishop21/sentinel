@@ -3,6 +3,7 @@
  * Floating card anchored near the clicked asset.
  * Draggable — click and drag the header to reposition.
  * Smart initial positioning: flips side if near screen edge.
+ * frontend-app/src/components/AssetInfoCard.jsx
  */
 
 import { useRef, useState, useEffect } from 'react'

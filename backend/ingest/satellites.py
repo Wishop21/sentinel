@@ -1,7 +1,7 @@
 """
 SENTINEL — Satellite ingestion pipeline
 Source: CelesTrak GP data API
-TLE refresh: every 6 hours (positions change slowly at this cadence)
+TLE refresh: daily via scheduler (positions change slowly at this cadence)
 Position propagation: every 10 seconds via skyfield, server-side
 
 Correct CelesTrak URL format (as of 2024):
@@ -14,18 +14,18 @@ Groups fetched:
   gps-ops     : GPS operational constellation
   glonass-ops : GLONASS operational constellation
   galileo     : Galileo constellation
-  active      : All active payloads (~7,000 objects)
 
-Note: CelesTrak rate-limits aggressively. We cache TLEs for 6 hours
-and only refresh during scheduled maintenance. Do not poll more
-frequently or your IP will be blocked.
+Note: CelesTrak rate-limits aggressively. We cache TLEs and only refresh
+during the scheduled daily job. Do not poll more frequently or your IP
+will be blocked.
+
+backend/ingest/satellites.py
 """
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 import asyncio
-
 
 import httpx
 import pandas as pd
@@ -57,7 +57,22 @@ _ts = load.timescale()
 # In-memory TLE cache
 _tle_cache: dict[str, list[tuple]] = {}
 _cache_timestamp: Optional[datetime] = None
-CACHE_MAX_AGE_HOURS = 12
+
+# Set longer than 24h so the daily scheduler job is always the one that
+# triggers a refresh. If set to 12h the cache would expire between scheduler
+# runs and a cold startup mid-day would silently use stale TLEs.
+CACHE_MAX_AGE_HOURS = 25
+
+
+def invalidate_tle_cache() -> None:
+    """
+    Explicitly invalidate the TLE cache.
+    Called by the scheduler's daily refresh job instead of mutating
+    module state directly from outside this module.
+    """
+    global _cache_timestamp
+    _cache_timestamp = None
+    logger.debug("TLE cache invalidated")
 
 
 def _parse_tle_text(text: str, group: str) -> list[tuple]:
@@ -83,7 +98,9 @@ def _parse_tle_text(text: str, group: str) -> list[tuple]:
 async def fetch_tle_catalog() -> dict[str, list[tuple]]:
     """
     Fetch TLE data for all groups from CelesTrak.
-    Caches results for CACHE_MAX_AGE_HOURS to respect rate limits.
+    Returns cached data if still within CACHE_MAX_AGE_HOURS.
+    Refresh is normally triggered by invalidate_tle_cache() + this call
+    from the daily scheduler job.
     """
     global _tle_cache, _cache_timestamp
 
@@ -114,7 +131,7 @@ async def fetch_tle_catalog() -> dict[str, list[tuple]]:
             except Exception as e:
                 logger.warning(f"TLE group '{group}' failed: {e} — using cache")
                 catalog[group] = _tle_cache.get(group, [])
-            
+
             # Delay between requests to respect CelesTrak rate limits
             await asyncio.sleep(1.5)
 
@@ -168,7 +185,7 @@ def propagate_positions(catalog: dict[str, list[tuple]]) -> pd.DataFrame:
 
 async def ingest_satellites() -> Optional[pd.DataFrame]:
     """
-    Full cycle: fetch TLEs → propagate positions → classify.
+    Full cycle: fetch TLEs (from cache or network) → propagate positions → classify.
     """
     catalog = await fetch_tle_catalog()
 

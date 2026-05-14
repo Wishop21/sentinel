@@ -2,6 +2,11 @@
  * SENTINEL — API data hooks
  * Polls the FastAPI backend and pushes data into the Zustand store.
  * Also updates position history on each poll for trail rendering.
+ *
+ * On each poll, dataSourceStatus is updated so the UI can show
+ * per-domain staleness indicators without inspecting the data itself.
+ *
+ * frontend-app/src/hooks/useData.js
  */
 
 import { useEffect } from 'react'
@@ -17,8 +22,9 @@ async function fetchJSON(path) {
 
 // ── Aircraft — poll every 15s ─────────────────────────────────
 export function useAircraftData() {
-  const setAircraft          = useStore(s => s.setAircraft)
+  const setAircraft           = useStore(s => s.setAircraft)
   const updatePositionHistory = useStore(s => s.updatePositionHistory)
+  const setDataSourceStatus   = useStore(s => s.setDataSourceStatus)
 
   useEffect(() => {
     const poll = async () => {
@@ -27,8 +33,12 @@ export function useAircraftData() {
         const aircraft = data.data || []
         setAircraft(aircraft)
         updatePositionHistory('aircraft', aircraft)
+        setDataSourceStatus('aircraft', { ok: true, lastUpdated: Date.now() })
       } catch (e) {
         console.warn('Aircraft fetch failed:', e.message)
+        // Pass ok:false but no lastUpdated — the store will preserve
+        // the previous lastUpdated so we can show "last seen X ago"
+        setDataSourceStatus('aircraft', { ok: false })
       }
     }
     poll()
@@ -39,15 +49,18 @@ export function useAircraftData() {
 
 // ── Satellites — poll every 10s ───────────────────────────────
 export function useSatelliteData() {
-  const setSatellites = useStore(s => s.setSatellites)
+  const setSatellites         = useStore(s => s.setSatellites)
+  const setDataSourceStatus   = useStore(s => s.setDataSourceStatus)
 
   useEffect(() => {
     const poll = async () => {
       try {
         const data = await fetchJSON('/live/satellites')
         setSatellites(data.data || [])
+        setDataSourceStatus('satellites', { ok: true, lastUpdated: Date.now() })
       } catch (e) {
         console.warn('Satellite fetch failed:', e.message)
+        setDataSourceStatus('satellites', { ok: false })
       }
     }
     poll()
@@ -58,8 +71,9 @@ export function useSatelliteData() {
 
 // ── Vessels — poll every 20s ──────────────────────────────────
 export function useVesselData() {
-  const setVessels           = useStore(s => s.setVessels)
+  const setVessels            = useStore(s => s.setVessels)
   const updatePositionHistory = useStore(s => s.updatePositionHistory)
+  const setDataSourceStatus   = useStore(s => s.setDataSourceStatus)
 
   useEffect(() => {
     const poll = async () => {
@@ -68,8 +82,10 @@ export function useVesselData() {
         const vessels = data.data || []
         setVessels(vessels)
         updatePositionHistory('vessels', vessels)
+        setDataSourceStatus('vessels', { ok: true, lastUpdated: Date.now() })
       } catch (e) {
         console.warn('Vessel fetch failed:', e.message)
+        setDataSourceStatus('vessels', { ok: false })
       }
     }
     poll()
@@ -80,8 +96,9 @@ export function useVesselData() {
 
 // ── Metrics — poll every 60s ──────────────────────────────────
 export function useMetrics() {
-  const setMetrics     = useStore(s => s.setMetrics)
-  const setDataQuality = useStore(s => s.setDataQuality)
+  const setMetrics          = useStore(s => s.setMetrics)
+  const setDataQuality      = useStore(s => s.setDataQuality)
+  const setDataSourceStatus = useStore(s => s.setDataSourceStatus)
 
   useEffect(() => {
     const poll = async () => {
@@ -92,8 +109,10 @@ export function useMetrics() {
         ])
         setMetrics(metrics.data || [])
         setDataQuality(quality.data || [])
+        setDataSourceStatus('metrics', { ok: true, lastUpdated: Date.now() })
       } catch (e) {
         console.warn('Metrics fetch failed:', e.message)
+        setDataSourceStatus('metrics', { ok: false })
       }
     }
     poll()

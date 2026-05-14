@@ -1,5 +1,6 @@
 /**
  * SENTINEL — Global state store (Zustand)
+ * frontend-app/src/store/index.js
  */
 
 import { create } from 'zustand'
@@ -49,7 +50,7 @@ const useStore = create((set, get) => ({
   setVessels:    (data) => set({ vessels: data }),
   setSatellites: (data) => set({ satellites: data }),
 
-  // ── Undersea cables (fetched once on first toggle) ────────────────────────
+  // ── Undersea cables (fetched once on first toggle) ────────
   cables: [],
   setCables: (data) => set({ cables: data }),
   cablesLoaded: false,
@@ -62,22 +63,27 @@ const useStore = create((set, get) => ({
   setMilitaryBasesLoaded: (v) => set({ militaryBasesLoaded: v }),
 
   // ── Position history (for trails) ─────────────────────────
+  // satellites key included to prevent crashes if satellite trail
+  // rendering is added later, and to keep the shape consistent.
   positionHistory: {
-    aircraft: new Map(),
-    vessels:  new Map(),
+    aircraft:   new Map(),
+    vessels:    new Map(),
+    satellites: new Map(),
   },
 
   updatePositionHistory: (domain, newData) => set(state => {
     const history = new Map(state.positionHistory[domain])
+    if (!history) return state  // guard against unknown domain
+
     const now = Date.now()
 
     for (const asset of newData) {
-      const id  = asset.icao24 || asset.mmsi
+      const id  = asset.icao24 || asset.mmsi || asset.name
       const lon = asset.lon
       const lat = asset.lat
       if (!id || lon == null || lat == null) continue
 
-      const alt = asset.baro_altitude ?? 0
+      const alt = asset.baro_altitude ?? asset.altitude_km ?? 0
       const prev = history.get(id) || []
       const updated = [...prev, { lon, lat, alt, t: now }]
       if (updated.length > TRAIL_LENGTH) updated.splice(0, updated.length - TRAIL_LENGTH)
@@ -96,6 +102,29 @@ const useStore = create((set, get) => ({
       }
     }
   }),
+
+  // ── Data source status ────────────────────────────────────
+  // Tracks per-domain fetch health so the UI can show staleness.
+  // lastUpdated: Date.now() timestamp of last successful fetch, or null
+  // ok: true if last fetch succeeded, false if it failed
+  dataSourceStatus: {
+    aircraft:   { ok: false, lastUpdated: null },
+    vessels:    { ok: false, lastUpdated: null },
+    satellites: { ok: false, lastUpdated: null },
+    metrics:    { ok: false, lastUpdated: null },
+  },
+
+  setDataSourceStatus: (domain, status) => set(state => ({
+    dataSourceStatus: {
+      ...state.dataSourceStatus,
+      [domain]: {
+        // Preserve lastUpdated from previous state on failure
+        // so the UI can show "last seen X minutes ago" rather than null
+        lastUpdated: status.lastUpdated ?? state.dataSourceStatus[domain]?.lastUpdated,
+        ok: status.ok,
+      },
+    }
+  })),
 
   // ── Metrics ───────────────────────────────────────────────
   metrics: null,

@@ -6,6 +6,8 @@ MMSI country prefix provides nationality as secondary context.
 
 Important limitation: military vessels frequently do not broadcast AIS,
 or broadcast with incorrect/missing type codes. 'unknown' is honest here.
+
+backend/classify/vessels.py implements the classification logic.
 """
 
 import pandas as pd

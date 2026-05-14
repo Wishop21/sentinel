@@ -8,6 +8,7 @@ Endpoints served:
   /api/analytics/countries  — top countries by aircraft count right now
   /api/analytics/trends     — 24h global count trend lines
   /api/analytics/patterns   — time-of-day traffic patterns
+  backend/analytics/regional.py — country breakdowns and global trends
 """
 
 import logging

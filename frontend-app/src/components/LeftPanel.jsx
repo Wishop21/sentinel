@@ -1,6 +1,7 @@
 /**
  * SENTINEL — Left panel
  * Layer toggles, sub-filters, classification filter
+ * frontend-app/src/components/LeftPanel.jsx
  */
 
 import { useState } from 'react'

@@ -1,5 +1,6 @@
 """
 SENTINEL — FastAPI application
+backend/main.py
 """
 
 import asyncio
@@ -17,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.config import settings
-from backend.scheduler import start_scheduler, get_live_satellites
+from backend.scheduler import start_scheduler, get_live_aircraft, get_live_satellites
 from backend.ingest.vessels import connect_aisstream, disconnect_aisstream, get_live_vessels
 from backend.storage.metrics import init_db, get_global_counts, get_data_quality
 
@@ -61,27 +62,28 @@ app.add_middleware(
 
 @app.get("/api/live/aircraft")
 async def live_aircraft():
-    from backend.ingest.aircraft import fetch_aircraft
-    df = await fetch_aircraft()
-    if df is None:
-        raise HTTPException(503, "Aircraft data temporarily unavailable")
+    """
+    Return the most recent aircraft positions from the scheduler's live cache.
+    The cache is updated every 15s by the ingestion job — this endpoint never
+    makes a direct upstream API call.
+    """
+    records = get_live_aircraft()
 
-    cols = ["icao24", "callsign", "origin_country", "lat", "lon",
-            "baro_altitude", "velocity", "true_track", "on_ground",
-            "classification", "confidence"]
+    if not records:
+        raise HTTPException(503, "Aircraft data not yet available — ingestion starting up")
 
-    records = []
-    for row in df[cols].to_dict(orient="records"):
-        clean = {
+    # Sanitise NaN/Inf values that JSON cannot serialise
+    safe = []
+    for row in records:
+        safe.append({
             k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
             for k, v in row.items()
-        }
-        records.append(clean)
+        })
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "count": len(records),
-        "data": records,
+        "count": len(safe),
+        "data": safe,
     }
 
 
@@ -189,20 +191,24 @@ async def military_bases():
     if _mil_cache is not None:
         return {"count": len(_mil_cache), "data": _mil_cache}
 
-    candidates = [
-        os.path.join("backend", "data", "military_bases.json"),
-        os.path.join(os.path.dirname(__file__), "data", "military_bases.json"),
-        "backend/data/military_bases.json",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            with open(path) as f:
-                _mil_cache = json.load(f)
-            logger.info(f"Military bases loaded: {len(_mil_cache)} facilities from static file")
-            return {"count": len(_mil_cache), "data": _mil_cache}
+    # Use __file__-relative path — works regardless of working directory
+    data_path = os.path.join(os.path.dirname(__file__), "data", "military_bases.json")
 
-    logger.error("military_bases.json not found — run: python scripts/generate_military_bases.py")
-    raise HTTPException(503, "Military bases data not available. Run: python scripts/generate_military_bases.py")
+    if not os.path.exists(data_path):
+        logger.error(
+            f"military_bases.json not found at {data_path} — "
+            "run: python scripts/generate_military_bases.py"
+        )
+        raise HTTPException(
+            503,
+            "Military bases data not available. Run: python scripts/generate_military_bases.py"
+        )
+
+    with open(data_path) as f:
+        _mil_cache = json.load(f)
+
+    logger.info(f"Military bases loaded: {len(_mil_cache)} facilities")
+    return {"count": len(_mil_cache), "data": _mil_cache}
 
 
 # ── Undersea cables layer ──────────────────────────────────────────────────

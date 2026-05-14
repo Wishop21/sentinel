@@ -1,6 +1,7 @@
 """
 SENTINEL — Central configuration
 Loads from .env file. All other modules import from here.
+backend/config.py
 """
 
 from pydantic_settings import BaseSettings

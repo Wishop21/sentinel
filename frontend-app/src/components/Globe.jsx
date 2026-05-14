@@ -10,12 +10,12 @@
  *   - Orbit paths on focused satellite
  *   - Camera HUD (lat/lon/altitude)
  *   - Click-to-focus with dimming
+ * frontend-app/src/components/Globe.jsx
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
 import { ScatterplotLayer, LineLayer, IconLayer, GeoJsonLayer } from '@deck.gl/layers'
-import { SolidPolygonLayer } from '@deck.gl/layers'
 import { _GlobeView as GlobeView } from '@deck.gl/core'
 import * as satellite from 'satellite.js'
 import useStore from '../store'
@@ -92,7 +92,6 @@ function buildTrails(historyMap, alpha = 180) {
     for (let i = 1; i < positions.length; i++) {
       const prev = positions[i - 1]
       const curr = positions[i]
-      // Fade: older segments are more transparent
       const fade = i / positions.length
       segments.push({
         from:  [prev.lon, prev.lat, prev.alt ?? 0],
@@ -172,11 +171,11 @@ export default function Globe() {
     return result
   }, [rawSatellites, classFilter, satGroupFilter])
 
-  // Fetch world GeoJSON once
+  // Fetch world GeoJSON once — used for the land fill layer
   useEffect(() => {
     fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_land.geojson')
       .then(r => r.json())
-      .then(data => setWorldData(data.features))
+      .then(data => setWorldData(data))
       .catch(e => console.warn('World GeoJSON fetch failed:', e))
   }, [])
 
@@ -211,27 +210,30 @@ export default function Globe() {
   }, [setFocusedAsset])
 
   // ── World base layer ──────────────────────────────────────
+  // GeoJsonLayer handles both Polygon and MultiPolygon natively,
+  // fixing the previous SolidPolygonLayer bug that silently dropped
+  // all polygon rings after the first in any MultiPolygon feature
+  // (islands, archipelagos, complex coastlines).
   const worldLayer = useMemo(() => {
     if (!worldData) return null
-    return new SolidPolygonLayer({
+    return new GeoJsonLayer({
       id: 'world-land',
       data: worldData,
-      getPolygon: d => {
-        const geom = d.geometry
-        if (geom.type === 'Polygon') return geom.coordinates
-        if (geom.type === 'MultiPolygon') return geom.coordinates[0]
-        return []
-      },
+      stroked: true,
+      filled: true,
       getFillColor: [22, 33, 50],
       getLineColor: [42, 63, 95],
       lineWidthMinPixels: 0.5,
-      stroked: true, filled: true, pickable: false,
+      pickable: false,
     })
   }, [worldData])
 
   // ── Aircraft trail layer ──────────────────────────────────
+  // Trails are rendered independently of focus state — removing the
+  // isFocused guard prevents all trails from disappearing when any
+  // single asset is clicked.
   const aircraftTrailLayer = useMemo(() => {
-    if (!layers_toggle.aircraft || isFocused) return null
+    if (!layers_toggle.aircraft) return null
     const segments = buildTrails(posHistory.aircraft, 140)
     if (!segments.length) return null
     return new LineLayer({
@@ -244,7 +246,7 @@ export default function Globe() {
       widthMinPixels: 1,
       pickable: false,
     })
-  }, [posHistory.aircraft, layers_toggle.aircraft, isFocused])
+  }, [posHistory.aircraft, layers_toggle.aircraft])
 
   // ── Aircraft icon layer ───────────────────────────────────
   const aircraftLayer = useMemo(() => {
@@ -253,11 +255,10 @@ export default function Globe() {
       id: 'aircraft',
       data: aircraft,
       getPosition: d => [d.lon ?? 0, d.lat ?? 0, d.baro_altitude ?? 0],
-      getIcon: d => ({
-        ...ICON_ATLAS[getAircraftIcon(d)],
-      }),
+      getIcon: d => ({ ...ICON_ATLAS[getAircraftIcon(d)] }),
       getSize: 20,
-      getAngle: d => -(d.true_track ?? 0),  // deck.gl angle is counter-clockwise
+      // deck.gl angle is counter-clockwise from north; true_track is clockwise
+      getAngle: d => -(d.true_track ?? 0),
       getColor: d => {
         const base = getAircraftColor(d)
         const alpha = isFocused ? (focusedAsset?.id === d.icao24 ? fullAlpha : dimAlpha) : fullAlpha
@@ -267,9 +268,12 @@ export default function Globe() {
       onClick: info => handleClick(info, 'aircraft'),
       billboard: true,
       alphaCutoff: 0.05,
+      // getAngle intentionally omitted from updateTriggers — deck.gl
+      // recomputes accessors automatically when data changes, and passing
+      // the full aircraft array here forced a complete GPU re-upload
+      // every poll cycle regardless of what actually changed.
       updateTriggers: {
         getColor: [focusedAsset?.id, isFocused],
-        getAngle: [aircraft],
       },
       transitions: { getColor: 200 },
     })
@@ -277,7 +281,7 @@ export default function Globe() {
 
   // ── Vessel trail layer ────────────────────────────────────
   const vesselTrailLayer = useMemo(() => {
-    if (!layers_toggle.vessels || isFocused) return null
+    if (!layers_toggle.vessels) return null
     const segments = buildTrails(posHistory.vessels, 120)
     if (!segments.length) return null
     return new LineLayer({
@@ -290,7 +294,7 @@ export default function Globe() {
       widthMinPixels: 1,
       pickable: false,
     })
-  }, [posHistory.vessels, layers_toggle.vessels, isFocused])
+  }, [posHistory.vessels, layers_toggle.vessels])
 
   // ── Vessel icon layer ─────────────────────────────────────
   const vesselLayer = useMemo(() => {
@@ -313,13 +317,13 @@ export default function Globe() {
       alphaCutoff: 0.05,
       updateTriggers: {
         getColor: [focusedAsset?.id, isFocused],
-        getAngle: [vessels],
+        // getAngle omitted — recomputed automatically on data change
       },
       transitions: { getColor: 200 },
     })
   }, [vessels, layers_toggle.vessels, focusedAsset, isFocused, handleClick])
 
-  // ── Satellite layer (ScatterplotLayer — no direction needed) ──
+  // ── Satellite layer ───────────────────────────────────────
   const satelliteLayer = useMemo(() => {
     if (!layers_toggle.satellites || !satellites.length) return null
     return new IconLayer({
@@ -445,7 +449,6 @@ export default function Globe() {
   const cablesLayer = useMemo(() => {
     if (!layers_toggle.cables || !cables.length) return null
 
-    // Flatten all cable segments into line segments for LineLayer
     const segments = []
     for (const cable of cables) {
       const color = hexToRgb(cable.color || '#00D4D4')

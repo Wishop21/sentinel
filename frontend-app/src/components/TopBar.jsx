@@ -1,6 +1,7 @@
 /**
  * SENTINEL — Top bar
  * Logo, live clock, connection status
+ * frontend-app/src/components/TopBar.jsx
  */
 
 import { useState, useEffect } from 'react'

@@ -9,6 +9,7 @@
  *   plane_military — angular delta shape, military aircraft
  *   ship           — teardrop chevron, vessels
  *   satellite      — four-pointed cross, satellites
+ * frontend-app/src/layers/icons.js
  */
 
 // ── SVG definitions ──────────────────────────────────────────

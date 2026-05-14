@@ -22,12 +22,14 @@ AIS vessel type codes (selected):
   70-79: Cargo
   80-89: Tanker
   90-99: Other
+
+backend/ingest/vessels.py
 """
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import websockets
@@ -45,6 +47,11 @@ AISSTREAM_URL = "wss://stream.aisstream.io/v0/stream"
 # Global bounding box — entire world
 WORLD_BBOX = [[[-180, -90], [180, 90]]]
 
+# Vessels not updated within this window are excluded from the live view.
+# AIS transmit intervals: Class A vessels every 2-10s under way, up to 3min at anchor.
+# 30 minutes is conservative — covers anchored vessels while pruning truly gone assets.
+_STALE_MINUTES = 30
+
 # In-memory vessel state (keyed by MMSI for fast updates)
 # This is the "live view" — snapshotted to Parquet every 15 min
 _vessel_state: dict[str, dict] = {}
@@ -53,8 +60,13 @@ _running = False
 
 
 def get_live_vessels() -> list[dict]:
-    """Return current vessel state as a list. Called by the API live endpoint."""
-    return list(_vessel_state.values())
+    """
+    Return current vessel state as a list, excluding stale entries.
+    Vessels not updated within _STALE_MINUTES are omitted from the live feed
+    but remain in _vessel_state until the next snapshot cycle clears them.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_STALE_MINUTES)).isoformat()
+    return [v for v in _vessel_state.values() if v.get("last_update", "") >= cutoff]
 
 
 async def _handle_message(message: str):
@@ -62,7 +74,6 @@ async def _handle_message(message: str):
     global _vessel_state
     try:
         data = json.loads(message)
-        msg_type = data.get("MessageType")
         meta = data.get("MetaData", {})
         mmsi = str(meta.get("MMSI", ""))
 
@@ -101,21 +112,23 @@ async def _handle_message(message: str):
 async def snapshot_vessels():
     """
     Freeze the current vessel state to Parquet.
+    Snapshots only live (non-stale) vessels — consistent with get_live_vessels().
     Called every 15 minutes by the scheduler.
     """
-    if not _vessel_state:
-        await record_snapshot_log("vessels", received=False, notes="No AIS data in state")
+    live = get_live_vessels()
+    if not live:
+        await record_snapshot_log("vessels", received=False, notes="No active AIS data in state")
         return
 
-    df = pd.DataFrame(list(_vessel_state.values()))
+    df = pd.DataFrame(live)
     df = classify_vessel(df)
 
     await save_snapshot(df, domain="vessels")
-    await upsert_global_counts("vessel", df)
-    await upsert_country_counts("vessel", df, country_col="flag")
+    await upsert_global_counts("vessels", df)
+    await upsert_country_counts("vessels", df, country_col="flag")
     await record_snapshot_log("vessels", received=True, record_count=len(df))
 
-    logger.info(f"Vessel snapshot: {len(df)} vessels")
+    logger.info(f"Vessel snapshot: {len(df)} active vessels ({len(_vessel_state)} total in state)")
 
 
 async def connect_aisstream():

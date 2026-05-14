@@ -11,6 +11,7 @@ Sources:
 
 Run with: python scripts/generate_military_bases.py
 Output:  backend/data/military_bases.json
+scripts/generate_military_bases.py
 """
 
 import json

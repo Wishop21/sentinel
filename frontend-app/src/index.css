@@ -1,3 +1,11 @@
+/**
+  * SENTINEL — Global styles and design tokens
+  * Imported at the root of the app to apply globally.
+  * Uses CSS variables for colors, fonts, dimensions, and animations.
+  *
+  * frontend-app/src/index.css
+  */
+
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700&display=swap');
 
 /* ── Design tokens ──────────────────────────────────────────── */

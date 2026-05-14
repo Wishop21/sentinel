@@ -10,6 +10,8 @@ Schema:
   snapshot_log    — data quality record (was each expected snapshot received?)
 
 We use aiosqlite for async-safe access from FastAPI.
+
+backend/storage/metrics.py
 """
 
 import logging

@@ -1,6 +1,7 @@
 /**
  * SENTINEL — Right Panel (Stage 3)
  * Live counts, trend indicators, country breakdown, sparklines
+ * frontend-app/src/components/RightPanel.jsx
  */
 
 import { useState, useEffect, useMemo } from 'react'

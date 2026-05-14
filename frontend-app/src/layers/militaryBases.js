@@ -5,6 +5,7 @@
  * Cached in-memory for the browser session after first load.
  *
  * Military type → colour mapping and display helpers.
+ * frontend-app/src/layers/militaryBases.js
  */
 
 // In-memory cache for this browser session

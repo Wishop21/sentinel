@@ -14,6 +14,8 @@ Classification categories:
   - crewed        (ISS, Tiangong, Crew Dragon)
   - debris        (defunct objects, rocket bodies)
   - unknown
+
+  backend/classify/satellites.py implements the classification logic.
 """
 
 import pandas as pd

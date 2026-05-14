@@ -1,5 +1,6 @@
 /**
  * SENTINEL — App root
+ * frotend-app/src/App.jsx
  */
 
 import './index.css'
