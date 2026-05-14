@@ -14,6 +14,7 @@ const useStore = create((set, get) => ({
     vessels:         true,
     satellites:      true,
     borders:         true,
+    cables:          false,
     mil_airfields:   false,
     mil_naval:       false,
     mil_bases:       false,
@@ -47,6 +48,12 @@ const useStore = create((set, get) => ({
   setAircraft:   (data) => set({ aircraft: data }),
   setVessels:    (data) => set({ vessels: data }),
   setSatellites: (data) => set({ satellites: data }),
+
+  // ── Undersea cables (fetched once on first toggle) ────────────────────────
+  cables: [],
+  setCables: (data) => set({ cables: data }),
+  cablesLoaded: false,
+  setCablesLoaded: (v) => set({ cablesLoaded: v }),
 
   // ── Military bases (static, loaded once) ──────────────────
   militaryBases: [],

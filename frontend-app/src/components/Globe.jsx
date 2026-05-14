@@ -54,6 +54,14 @@ function CameraHUD({ viewState }) {
 }
 
 // ── Orbit computation ────────────────────────────────────────
+function hexToRgb(hex) {
+  const clean = hex.replace('#', '')
+  const r = parseInt(clean.slice(0, 2), 16)
+  const g = parseInt(clean.slice(2, 4), 16)
+  const b = parseInt(clean.slice(4, 6), 16)
+  return isNaN(r) ? [0, 212, 212] : [r, g, b]
+}
+
 function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
   try {
     const satrec = satellite.twoline2satrec(tle1, tle2)
@@ -119,6 +127,23 @@ export default function Globe() {
   const setMilitaryBases       = useStore(s => s.setMilitaryBases)
   const militaryBasesLoaded    = useStore(s => s.militaryBasesLoaded)
   const setMilitaryBasesLoaded = useStore(s => s.setMilitaryBasesLoaded)
+
+  // Undersea cables
+  const cables          = useStore(s => s.cables)
+  const setCables       = useStore(s => s.setCables)
+  const cablesLoaded    = useStore(s => s.cablesLoaded)
+  const setCablesLoaded = useStore(s => s.setCablesLoaded)
+
+  useEffect(() => {
+    if (!layers_toggle.cables || cablesLoaded) return
+    fetch('/api/layers/undersea-cables')
+      .then(r => r.json())
+      .then(data => {
+        setCables(data.data || [])
+        setCablesLoaded(true)
+      })
+      .catch(e => console.warn('Cables fetch failed:', e))
+  }, [layers_toggle.cables])
 
   const anyMilLayerOn = layers_toggle.mil_airfields || layers_toggle.mil_naval ||
     layers_toggle.mil_bases || layers_toggle.mil_barracks ||
@@ -416,9 +441,45 @@ export default function Globe() {
     layers_toggle.mil_missiles, layers_toggle.mil_training,
     focusedAsset, isFocused, setFocusedAsset])
 
+  // ── Undersea cables layer ─────────────────────────────────
+  const cablesLayer = useMemo(() => {
+    if (!layers_toggle.cables || !cables.length) return null
+
+    // Flatten all cable segments into line segments for LineLayer
+    const segments = []
+    for (const cable of cables) {
+      const color = hexToRgb(cable.color || '#00D4D4')
+      for (const coordSet of cable.coords || []) {
+        for (let i = 0; i < coordSet.length - 1; i++) {
+          segments.push({
+            from:  coordSet[i],
+            to:    coordSet[i + 1],
+            color: [...color, 160],
+            name:  cable.name,
+            id:    cable.id,
+          })
+        }
+      }
+    }
+    if (!segments.length) return null
+
+    return new LineLayer({
+      id: 'undersea-cables',
+      data: segments,
+      getSourcePosition: d => d.from,
+      getTargetPosition: d => d.to,
+      getColor: d => d.color,
+      getWidth: 1.5,
+      widthMinPixels: 1,
+      widthMaxPixels: 3,
+      pickable: false,
+    })
+  }, [cables, layers_toggle.cables])
+
   const deckLayers = [
     worldLayer,
     bordersLayer,
+    cablesLayer,
     militaryBasesLayer,
     aircraftTrailLayer,
     vesselTrailLayer,

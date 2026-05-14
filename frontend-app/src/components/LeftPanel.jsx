@@ -144,6 +144,7 @@ function colorToRgb(color) {
     '#CC4444':               '204, 68, 68',
     '#FF2222':               '255, 34, 34',
     '#AA6622':               '170, 102, 34',
+    '#00FFD4':               '0, 255, 212',
   }
   return map[color] || '148, 163, 184'
 }
@@ -157,6 +158,7 @@ export default function LeftPanel() {
   const satGroupFilter    = useStore(s => s.satelliteGroupFilter)
   const setSatGroupFilter = useStore(s => s.setSatelliteGroupFilter)
   const militaryBases     = useStore(s => s.militaryBases)
+  const cables            = useStore(s => s.cables)
 
   const milAllCount      = militaryBases.length
   const milAirfieldCount = militaryBases.filter(b => b.type === 'airfield').length
@@ -206,6 +208,8 @@ export default function LeftPanel() {
             />
           ))}
         </LayerToggle>
+        <LayerToggle domain="borders" label="Borders"         color="var(--text-secondary)" />
+        <LayerToggle domain="cables"  label="Undersea Cables" color="#00FFD4"               count={cables.length || null} />
       </div>
 
       {/* Divider */}

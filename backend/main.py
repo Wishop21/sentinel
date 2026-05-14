@@ -205,6 +205,65 @@ async def military_bases():
     raise HTTPException(503, "Military bases data not available. Run: python scripts/generate_military_bases.py")
 
 
+# ── Undersea cables layer ──────────────────────────────────────────────────
+
+_cables_cache = None
+_cables_cache_time = 0
+_CABLES_CACHE_TTL = 86400 * 7  # 7 days — cables don't change often
+
+@app.get("/api/layers/undersea-cables")
+async def undersea_cables():
+    """
+    Fetch submarine cable routes from TeleGeography's public API.
+    Returns simplified line segments for rendering.
+    Cached for 7 days.
+    """
+    global _cables_cache, _cables_cache_time
+
+    if _cables_cache is not None and time.time() - _cables_cache_time < _CABLES_CACHE_TTL:
+        logger.info(f"Undersea cables served from cache ({len(_cables_cache)} cables)")
+        return {"count": len(_cables_cache), "data": _cables_cache}
+
+    logger.info("Fetching undersea cables from TeleGeography...")
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "SENTINEL/1.0"}) as client:
+            resp = await client.get("https://www.submarinecablemap.com/api/v3/cable/cable-geo.json")
+            resp.raise_for_status()
+            geojson = resp.json()
+
+        cables = []
+        for feature in geojson.get("features", []):
+            props = feature.get("properties", {})
+            geom  = feature.get("geometry", {})
+            if not props or not geom:
+                continue
+
+            # MultiLineString — each sub-array is one segment of the cable route
+            coords_sets = geom.get("coordinates", [])
+            if geom.get("type") == "LineString":
+                coords_sets = [coords_sets]
+
+            cables.append({
+                "id":     props.get("id", ""),
+                "name":   props.get("name", "Unknown Cable"),
+                "color":  props.get("color", "#00D4D4"),
+                "rfs":    props.get("rfs"),           # ready-for-service year
+                "length": props.get("cable_length"),
+                "owners": props.get("owners", []),
+                "url":    props.get("url"),
+                "coords": coords_sets,                 # list of line segments
+            })
+
+        _cables_cache = cables
+        _cables_cache_time = time.time()
+        logger.info(f"Undersea cables loaded: {len(cables)} cable systems")
+        return {"count": len(cables), "data": cables}
+
+    except Exception as e:
+        logger.error(f"Undersea cables fetch failed: {e}")
+        raise HTTPException(503, f"Could not fetch undersea cables: {e}")
+
+
 # ── Data quality endpoint ──────────────────────────────────────────────────
 
 @app.get("/api/quality")
