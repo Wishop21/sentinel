@@ -9,9 +9,10 @@ import { useRef, useState, useEffect } from 'react'
 import useStore from '../store'
 
 const DOMAIN_COLOR = {
-  aircraft:  'var(--aircraft)',
-  vessel:    'var(--vessel)',
-  satellite: 'var(--satellite)',
+  aircraft:      'var(--aircraft)',
+  vessel:        'var(--vessel)',
+  satellite:     'var(--satellite)',
+  military_base: 'var(--military)',
 }
 
 const CONFIDENCE_COLOR = {
@@ -259,6 +260,30 @@ export default function AssetInfoCard() {
             <Field label="GROUP"     value={data.group} />
             <Field label="ALTITUDE"  value={data.altitude_km != null ? `${data.altitude_km.toFixed(0)} km` : null} mono />
             <Field label="LAT / LON" value={data.lat != null ? `${data.lat.toFixed(2)}° / ${data.lon.toFixed(2)}°` : null} mono />
+          </>
+        )}
+
+        {/* Military base fields */}
+        {type === 'military_base' && (
+          <>
+            <Field label="FACILITY NAME" value={data.name} />
+            <Field label="TYPE"          value={data.type?.replace(/_/g, ' ').toUpperCase()} mono />
+            <Field label="OPERATOR"      value={data.operator} />
+            <Field label="COUNTRY"       value={data.country} />
+            <Field label="SERVICE"       value={data.service?.replace(/_/g, ' ')} />
+            {data.iata && <Field label="IATA CODE" value={data.iata} mono />}
+            {data.icao && <Field label="ICAO CODE" value={data.icao} mono />}
+            {data.note && <Field label="NOTE"      value={data.note} />}
+            <div style={{
+              marginTop: 8, padding: '6px 8px',
+              background: 'rgba(255,68,68,0.06)',
+              border: '1px solid rgba(255,68,68,0.15)',
+              borderRadius: 4,
+              fontSize: 9, fontFamily: 'var(--font-mono)',
+              color: 'var(--text-dim)', lineHeight: 1.5,
+            }}>
+              ⚠ Source: OpenStreetMap. Coverage varies by country and region.
+            </div>
           </>
         )}
 

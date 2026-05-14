@@ -14,13 +14,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
-import { ScatterplotLayer, LineLayer, IconLayer } from '@deck.gl/layers'
+import { ScatterplotLayer, LineLayer, IconLayer, GeoJsonLayer } from '@deck.gl/layers'
 import { SolidPolygonLayer } from '@deck.gl/layers'
 import { _GlobeView as GlobeView } from '@deck.gl/core'
 import * as satellite from 'satellite.js'
 import useStore from '../store'
 import { ICON_ATLAS, getAircraftIcon, getAircraftColor, getVesselColor } from '../layers/icons'
-import { GeoJsonLayer } from '@deck.gl/layers'
+import { fetchMilitaryBases, getMilitaryBaseColor } from '../layers/militaryBases'
 
 // ── Constants ────────────────────────────────────────────────
 const INITIAL_VIEW_STATE = {
@@ -112,15 +112,24 @@ export default function Globe() {
 
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
   const [worldData, setWorldData] = useState(null)
-
   const [bordersData, setBordersData] = useState(null)
 
+  // Military bases — loaded from store, fetched on first toggle
+  const militaryBases          = useStore(s => s.militaryBases)
+  const setMilitaryBases       = useStore(s => s.setMilitaryBases)
+  const militaryBasesLoaded    = useStore(s => s.militaryBasesLoaded)
+  const setMilitaryBasesLoaded = useStore(s => s.setMilitaryBasesLoaded)
+
+  const anyMilLayerOn = layers_toggle.mil_airfields || layers_toggle.mil_naval ||
+    layers_toggle.mil_bases || layers_toggle.mil_barracks ||
+    layers_toggle.mil_missiles || layers_toggle.mil_training
   useEffect(() => {
-    fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_boundary_lines_land.geojson')
-      .then(r => r.json())
-      .then(data => setBordersData(data.features))
-      .catch(e => console.warn('Borders GeoJSON fetch failed:', e))
-  }, [])
+    if (!anyMilLayerOn || militaryBasesLoaded) return
+    fetchMilitaryBases().then(data => {
+      setMilitaryBases(data)
+      setMilitaryBasesLoaded(true)
+    })
+  }, [anyMilLayerOn])
 
   // Filtered data
   const aircraft = useMemo(() =>
@@ -144,6 +153,14 @@ export default function Globe() {
       .then(r => r.json())
       .then(data => setWorldData(data.features))
       .catch(e => console.warn('World GeoJSON fetch failed:', e))
+  }, [])
+
+  // Fetch borders GeoJSON once
+  useEffect(() => {
+    fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_boundary_lines_land.geojson')
+      .then(r => r.json())
+      .then(data => setBordersData(data.features))
+      .catch(e => console.warn('Borders GeoJSON fetch failed:', e))
   }, [])
 
   // ESC to dismiss focus
@@ -186,22 +203,6 @@ export default function Globe() {
       stroked: true, filled: true, pickable: false,
     })
   }, [worldData])
-
-  // ── Borders layer ──────────────────────────────────────
-  const bordersLayer = useMemo(() => {
-    if (!layers_toggle.borders || !bordersData) return null
-    return new GeoJsonLayer({
-      id: 'borders',
-      data: { type: 'FeatureCollection', features: bordersData },
-      stroked: true,
-      filled: false,
-      getLineColor: [60, 90, 130, 160],
-      getLineWidth: 1,
-      lineWidthMinPixels: 0.5,
-      lineWidthMaxPixels: 1.5,
-      pickable: false,
-    })
-  }, [bordersData, layers_toggle.borders])
 
   // ── Aircraft trail layer ──────────────────────────────────
   const aircraftTrailLayer = useMemo(() => {
@@ -344,9 +345,81 @@ export default function Globe() {
     })
   }, [orbitPath])
 
+  // ── Borders layer ─────────────────────────────────────────
+  const bordersLayer = useMemo(() => {
+    if (!layers_toggle.borders || !bordersData) return null
+    return new GeoJsonLayer({
+      id: 'borders',
+      data: { type: 'FeatureCollection', features: bordersData },
+      stroked: true,
+      filled: false,
+      getLineColor: [60, 90, 130, 160],
+      getLineWidth: 1,
+      lineWidthMinPixels: 0.5,
+      lineWidthMaxPixels: 1.5,
+      pickable: false,
+    })
+  }, [bordersData, layers_toggle.borders])
+
+  // ── Military bases layer ──────────────────────────────────
+  const militaryBasesLayer = useMemo(() => {
+    const anyOn = layers_toggle.mil_airfields || layers_toggle.mil_naval ||
+      layers_toggle.mil_bases || layers_toggle.mil_barracks ||
+      layers_toggle.mil_missiles || layers_toggle.mil_training
+    if (!anyOn || !militaryBases.length) return null
+
+    const filtered = militaryBases.filter(b => {
+      if (layers_toggle.mil_airfields && b.type === 'airfield') return true
+      if (layers_toggle.mil_naval && (b.type === 'naval_base' || b.type === 'harbour')) return true
+      if (layers_toggle.mil_bases && b.type === 'base') return true
+      if (layers_toggle.mil_barracks && b.type === 'barracks') return true
+      if (layers_toggle.mil_missiles && b.type === 'missile_site') return true
+      if (layers_toggle.mil_training && (b.type === 'training_area' || b.type === 'range')) return true
+      return false
+    })
+
+    return new ScatterplotLayer({
+      id: 'military-bases',
+      data: filtered,
+      getPosition: d => [d.lon, d.lat, 0],
+      getRadius: 25000,
+      getFillColor: d => {
+        const [r, g, b] = getMilitaryBaseColor(d)
+        return [r, g, b, isFocused ? (focusedAsset?.id === d.id ? 220 : 40) : 200]
+      },
+      getLineColor: d => {
+        const [r, g, b] = getMilitaryBaseColor(d)
+        return [r, g, b, 255]
+      },
+      stroked: true,
+      lineWidthMinPixels: 1,
+      pickable: true,
+      onClick: (info) => {
+        if (!info.object) return
+        setFocusedAsset({
+          id:      info.object.id,
+          type:    'military_base',
+          data:    info.object,
+          screenX: info.x,
+          screenY: info.y,
+        })
+      },
+      updateTriggers: {
+        getFillColor: [focusedAsset?.id, isFocused,
+          layers_toggle.mil_airfields, layers_toggle.mil_naval,
+          layers_toggle.mil_bases, layers_toggle.mil_barracks,
+          layers_toggle.mil_missiles, layers_toggle.mil_training],
+      },
+    })
+  }, [militaryBases, layers_toggle.mil_airfields, layers_toggle.mil_naval,
+    layers_toggle.mil_bases, layers_toggle.mil_barracks,
+    layers_toggle.mil_missiles, layers_toggle.mil_training,
+    focusedAsset, isFocused, setFocusedAsset])
+
   const deckLayers = [
     worldLayer,
     bordersLayer,
+    militaryBasesLayer,
     aircraftTrailLayer,
     vesselTrailLayer,
     orbitLayer,

@@ -7,11 +7,13 @@ import { useState } from 'react'
 import useStore from '../store'
 
 const SATELLITE_GROUPS = [
-  { id: null,       label: 'All satellites' },
-  { id: 'oneweb',   label: 'OneWeb' },
-  { id: 'stations', label: 'Stations / ISS' },
-  { id: 'gps-ops',  label: 'GPS' },
-  { id: 'galileo',  label: 'Galileo' },
+  { id: null,         label: 'All satellites' },
+  { id: 'starlink',   label: 'Starlink' },
+  { id: 'oneweb',     label: 'OneWeb' },
+  { id: 'stations',   label: 'Stations / ISS' },
+  { id: 'gps-ops',    label: 'GPS' },
+  { id: 'glonass-ops',label: 'GLONASS' },
+  { id: 'galileo',    label: 'Galileo' },
 ]
 
 const CLASSIFICATIONS = [
@@ -132,10 +134,16 @@ function FilterChip({ label, active, color, onClick }) {
 // Naive hex→rgb helper for rgba() usage
 function colorToRgb(color) {
   const map = {
-    'var(--aircraft)':  '245, 166, 35',
-    'var(--vessel)':    '0, 212, 212',
-    'var(--satellite)': '168, 85, 247',
+    'var(--aircraft)':       '245, 166, 35',
+    'var(--vessel)':         '0, 212, 212',
+    'var(--satellite)':      '168, 85, 247',
     'var(--text-secondary)': '107, 132, 163',
+    'var(--military)':       '255, 68, 68',
+    '#FF8C00':               '255, 140, 0',
+    '#00A0DC':               '0, 160, 220',
+    '#CC4444':               '204, 68, 68',
+    '#FF2222':               '255, 34, 34',
+    '#AA6622':               '170, 102, 34',
   }
   return map[color] || '148, 163, 184'
 }
@@ -148,6 +156,15 @@ export default function LeftPanel() {
   const setClassFilter    = useStore(s => s.setClassificationFilter)
   const satGroupFilter    = useStore(s => s.satelliteGroupFilter)
   const setSatGroupFilter = useStore(s => s.setSatelliteGroupFilter)
+  const militaryBases     = useStore(s => s.militaryBases)
+
+  const milAllCount      = militaryBases.length
+  const milAirfieldCount = militaryBases.filter(b => b.type === 'airfield').length
+  const milNavalCount    = militaryBases.filter(b => b.type === 'naval_base' || b.type === 'harbour').length
+  const milBaseCount     = militaryBases.filter(b => b.type === 'base').length
+  const milBarracksCount = militaryBases.filter(b => b.type === 'barracks').length
+  const milMissileCount  = militaryBases.filter(b => b.type === 'missile_site').length
+  const milTrainingCount = militaryBases.filter(b => b.type === 'training_area' || b.type === 'range').length
 
   return (
     <div className="glass anim-left" style={{
@@ -189,13 +206,28 @@ export default function LeftPanel() {
             />
           ))}
         </LayerToggle>
-        <LayerToggle domain="borders" label="Borders" color="var(--text-secondary)" />  
       </div>
 
       {/* Divider */}
       <div style={{ height: 1, background: 'var(--border-dim)', marginBottom: 16 }} />
 
-      {/* Section: Classification filter */}
+      {/* Section: Military Infrastructure */}
+      <div style={{ marginBottom: 20 }}>
+        <SectionLabel>MILITARY INFRASTRUCTURE</SectionLabel>
+        <div style={{
+          fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
+          marginBottom: 10, lineHeight: 1.5,
+        }}>
+          OSM data — loads on first enable. Coverage varies.
+        </div>
+
+        <LayerToggle domain="mil_airfields" label="Airfields"      color="#FF8C00" count={milAirfieldCount || null} />
+        <LayerToggle domain="mil_naval"     label="Naval Bases"    color="#00A0DC" count={milNavalCount    || null} />
+        <LayerToggle domain="mil_bases"     label="Ground Bases"   color="var(--military)" count={milBaseCount || null} />
+        <LayerToggle domain="mil_barracks"  label="Barracks"       color="#CC4444" count={milBarracksCount || null} />
+        <LayerToggle domain="mil_missiles"  label="Missile Sites"  color="#FF2222" count={milMissileCount  || null} />
+        <LayerToggle domain="mil_training"  label="Training Areas" color="#AA6622" count={milTrainingCount || null} />
+      </div>
       <div>
         <SectionLabel>FILTER BY TYPE</SectionLabel>
         {CLASSIFICATIONS.map(c => (

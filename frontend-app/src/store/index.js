@@ -1,23 +1,25 @@
 /**
  * SENTINEL — Global state store (Zustand)
- *
- * Additions in this version:
- *   - positionHistory: Map of asset ID → last N positions for trail rendering
- *   - updatePositionHistory: called on each data poll to append new positions
  */
 
 import { create } from 'zustand'
 
-const TRAIL_LENGTH = 8  // number of historical positions to keep per asset
+const TRAIL_LENGTH = 8
 
 const useStore = create((set, get) => ({
 
   // ── Layer toggles ─────────────────────────────────────────
   layers: {
-    aircraft:   true,
-    vessels:    true,
-    satellites: true,
-    borders:    true,
+    aircraft:        true,
+    vessels:         true,
+    satellites:      true,
+    borders:         true,
+    mil_airfields:   false,
+    mil_naval:       false,
+    mil_bases:       false,
+    mil_barracks:    false,
+    mil_missiles:    false,
+    mil_training:    false,
   },
 
   toggleLayer: (layer) => set(state => ({
@@ -46,8 +48,13 @@ const useStore = create((set, get) => ({
   setVessels:    (data) => set({ vessels: data }),
   setSatellites: (data) => set({ satellites: data }),
 
+  // ── Military bases (static, loaded once) ──────────────────
+  militaryBases: [],
+  setMilitaryBases: (data) => set({ militaryBases: data }),
+  militaryBasesLoaded: false,
+  setMilitaryBasesLoaded: (v) => set({ militaryBasesLoaded: v }),
+
   // ── Position history (for trails) ─────────────────────────
-  // { aircraft: Map<id, [{lon, lat, alt, t}]>, vessels: Map<id, [...]> }
   positionHistory: {
     aircraft: new Map(),
     vessels:  new Map(),
@@ -65,20 +72,14 @@ const useStore = create((set, get) => ({
 
       const alt = asset.baro_altitude ?? 0
       const prev = history.get(id) || []
-
-      // Append new position, keep only last TRAIL_LENGTH
       const updated = [...prev, { lon, lat, alt, t: now }]
       if (updated.length > TRAIL_LENGTH) updated.splice(0, updated.length - TRAIL_LENGTH)
-
       history.set(id, updated)
     }
 
-    // Prune assets not seen in 2 minutes
     const cutoff = now - 120000
     for (const [id, positions] of history) {
-      if (positions[positions.length - 1]?.t < cutoff) {
-        history.delete(id)
-      }
+      if (positions[positions.length - 1]?.t < cutoff) history.delete(id)
     }
 
     return {
