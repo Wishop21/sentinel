@@ -15,21 +15,10 @@ Classification categories:
   - debris        (defunct objects, rocket bodies)
   - unknown
 
-  backend/classify/satellites.py implements the classification logic.
+backend/classify/satellites.py
 """
 
 import pandas as pd
-
-# Group → classification mapping (deterministic from TLE source)
-GROUPS = {
-    "stations":    "https://celestrak.org/SOCRATES/query.php?GROUP=stations&FORMAT=TLE",
-    "starlink":    "https://celestrak.org/SOCRATES/query.php?GROUP=starlink&FORMAT=TLE",
-    "oneweb":      "https://celestrak.org/SOCRATES/query.php?GROUP=oneweb&FORMAT=TLE",
-    "gps-ops":     "https://celestrak.org/SOCRATES/query.php?GROUP=gps-ops&FORMAT=TLE",
-    "glonass-ops": "https://celestrak.org/SOCRATES/query.php?GROUP=glonass-ops&FORMAT=TLE",
-    "galileo":     "https://celestrak.org/SOCRATES/query.php?GROUP=galileo&FORMAT=TLE",
-    "active":      "https://celestrak.org/SOCRATES/query.php?GROUP=active&FORMAT=TLE",
-}
 
 
 # Name patterns for military satellites
@@ -64,6 +53,9 @@ CIVIL_NAME_PATTERNS = [
     "SWARM",
 ]
 
+# Group → (classification, confidence) mapping.
+# Groups are set by ingest/satellites.py from the CelesTrak source URL —
+# membership is deterministic so confidence is high.
 GROUP_CLASSIFICATION = {
     "stations":    ("crewed",     "high"),
     "starlink":    ("commercial", "high"),
@@ -72,6 +64,7 @@ GROUP_CLASSIFICATION = {
     "glonass-ops": ("navigation", "high"),
     "galileo":     ("navigation", "high"),
 }
+
 
 def _classify_single(row: pd.Series) -> tuple[str, str]:
     """Classify a single satellite. Returns (classification, confidence)."""

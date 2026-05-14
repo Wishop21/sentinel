@@ -18,7 +18,7 @@ Classification categories:
 
 This module is deliberately transparent about its limitations.
 Coverage gaps are expected, especially over regions with sparse ADS-B receivers.
-backend/classify/aircraft.py implements the classification logic.
+backend/classify/aircraft.py
 """
 
 import re
@@ -32,21 +32,33 @@ logger = logging.getLogger(__name__)
 # Source: ICAO Annex 10, national CAA publications, OpenSky research papers.
 # This is not exhaustive — many military aircraft use civilian registrations
 # or do not broadcast ADS-B at all.
+#
+# Confidence notes:
+#   Most ranges are genuinely military-only allocations → HIGH confidence.
+#   Exception: Russian Federation block 100000–1FFFFF is a mixed allocation
+#   covering both military and civilian registrations (Aeroflot and other
+#   Russian carriers fall within it). Confidence is MEDIUM for this range —
+#   the callsign check at step 2 will catch genuine military callsigns with
+#   higher specificity than the ICAO range alone.
 MILITARY_ICAO_RANGES = [
-    # United States military
+    # United States military — dedicated block, high confidence
     ("ADF7C7", "ADF7C7"),  # USAF specific
     ("AE0000", "AFFFFF"),  # US military block (large)
-    # United Kingdom
+    # United Kingdom — dedicated RAF block
     ("43C000", "43CFFF"),  # RAF
-    # France
+    # France — partial military allocation
     ("3B0000", "3BFFFF"),  # French military (partial)
     # Germany
     ("347000", "3473FF"),  # Luftwaffe
-    # Russia (known military ranges — incomplete by design)
-    ("100000", "1FFFFF"),  # Russian Federation (mixed civil/military)
     # NATO AWACS
     ("499F00", "499FFF"),
 ]
+
+# Russian Federation ICAO block — treated separately due to mixed allocation.
+# 100000–1FFFFF covers both military and civilian Russian registrations.
+# Classified as military/medium rather than military/high to avoid tagging
+# Aeroflot, S7, and other Russian carriers as high-confidence military.
+RUSSIAN_ICAO_RANGE = ("100000", "1FFFFF")
 
 # ── Military callsign patterns ─────────────────────────────────────────────
 # Common prefixes used by military operators. Not exhaustive.
@@ -84,16 +96,27 @@ COMMERCIAL_OPERATORS = {
 _MILITARY_RE = re.compile("|".join(MILITARY_CALLSIGN_PATTERNS), re.IGNORECASE)
 
 
-def _icao_in_military_range(icao_hex: str) -> bool:
-    """Check if an ICAO 24-bit address falls within a known military block."""
+def _icao_in_military_range(icao_hex: str) -> tuple[bool, str]:
+    """
+    Check if an ICAO 24-bit address falls within a known military block.
+    Returns (matched, confidence) so callers can handle mixed ranges correctly.
+    """
     try:
         icao_int = int(icao_hex.upper(), 16)
+
+        # Check dedicated military ranges first — high confidence
         for start, end in MILITARY_ICAO_RANGES:
             if int(start, 16) <= icao_int <= int(end, 16):
-                return True
+                return True, "high"
+
+        # Russian mixed block — medium confidence
+        if int(RUSSIAN_ICAO_RANGE[0], 16) <= icao_int <= int(RUSSIAN_ICAO_RANGE[1], 16):
+            return True, "medium"
+
     except (ValueError, TypeError):
         pass
-    return False
+
+    return False, "unknown"
 
 
 def _classify_single(row: pd.Series) -> tuple[str, str]:
@@ -105,9 +128,11 @@ def _classify_single(row: pd.Series) -> tuple[str, str]:
     callsign = str(row.get("callsign", "")).strip()
     operator_prefix = callsign[:3].upper() if len(callsign) >= 3 else ""
 
-    # 1. ICAO hex range check — highest confidence
-    if icao and _icao_in_military_range(icao):
-        return "military", "high"
+    # 1. ICAO hex range check — confidence depends on the range matched
+    if icao:
+        matched, confidence = _icao_in_military_range(icao)
+        if matched:
+            return "military", confidence
 
     # 2. Callsign pattern — medium confidence
     if callsign and _MILITARY_RE.match(callsign):
@@ -125,16 +150,16 @@ def _classify_single(row: pd.Series) -> tuple[str, str]:
     if pd.notna(category):
         cat = int(category)
         # OpenSky category codes: https://openskynetwork.github.io/opensky-api/rest.html
-        if cat in (1,):    # No info
+        if cat in (1,):       # No info
             pass
-        elif cat in (2, 3):  # Light, small
+        elif cat in (2, 3):   # Light, small
             return "general", "low"
-        elif cat in (4, 5):  # Large, heavy
-            return "commercial", "low"  # Likely but not certain
-        elif cat == 7:     # Rotorcraft
+        elif cat in (4, 5):   # Large, heavy — likely commercial but not certain
+            return "commercial", "low"
+        elif cat == 7:        # Rotorcraft
             return "general", "low"
 
-    # 5. Origin country heuristic — weakest signal, low confidence only
+    # 5. Origin country heuristic — weakest signal, low confidence only.
     # We deliberately do NOT classify based on country alone — too unreliable.
 
     return "unknown", "unknown"
