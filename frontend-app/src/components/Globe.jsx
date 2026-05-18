@@ -165,6 +165,7 @@ export default function Globe() {
   const setSelectedRegion = useStore(s => s.setSelectedRegion)
   const clearRegion     = useStore(s => s.clearRegion)
   const heatmapDomain   = useStore(s => s.heatmapDomain)
+  const alerts          = useStore(s => s.alerts)
 
   const rawAircraft    = useStore(s => s.aircraft)
   const rawVessels     = useStore(s => s.vessels)
@@ -554,6 +555,43 @@ export default function Globe() {
     })
   }, [heatmapDomain, rawAircraft, rawVessels, rawSatellites])
 
+  // ── Alert highlight rings ─────────────────────────────────
+  // Pulsing ScatterplotLayer rings drawn around flagged assets.
+  // Severity controls ring colour and size:
+  //   high   → red,    larger ring
+  //   medium → amber,  medium ring
+  //   low    → grey,   small ring
+  // Stroked only — no fill — so the asset icon beneath is still visible.
+  const alertRingsLayer = useMemo(() => {
+    if (!alerts || !alerts.length) return null
+
+    const RING_COLORS = {
+      high:   [255, 68,  68,  200],
+      medium: [245, 166, 35,  180],
+      low:    [107, 132, 163, 140],
+    }
+    const RING_RADIUS = {
+      high:   60000,   // 60 km radius ring
+      medium: 45000,
+      low:    30000,
+    }
+
+    return new ScatterplotLayer({
+      id: 'alert-rings',
+      data: alerts,
+      getPosition: d => [d.lon, d.lat, (d.asset?.baro_altitude ?? d.asset?.altitude_km * 1000) ?? 0],
+      getRadius: d => RING_RADIUS[d.severity] || 30000,
+      getFillColor: [0, 0, 0, 0],
+      getLineColor: d => RING_COLORS[d.severity] || [107, 132, 163, 140],
+      stroked: true,
+      filled: false,
+      lineWidthMinPixels: 1.5,
+      lineWidthMaxPixels: 3,
+      pickable: false,
+      updateTriggers: { getLineColor: [alerts.length] },
+    })
+  }, [alerts])
+
   // ── H3 region highlight layer ─────────────────────────────
   // Renders the selected H3 cell as a filled hex on the globe surface.
   // Uses a cyan accent distinct from the satellite footprint purple.
@@ -686,9 +724,10 @@ export default function Globe() {
     bordersLayer,
     cablesLayer,
     militaryBasesLayer,
-    heatmapLayer,      // density heatmap — above static layers, below assets
+    heatmapLayer,
     aircraftTrailLayer,
     vesselTrailLayer,
+    alertRingsLayer,   // rings around flagged assets — below asset icons
     regionLayer,
     footprintLayer,
     orbitLayer,

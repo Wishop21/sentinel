@@ -1,7 +1,8 @@
 /**
  * SENTINEL — API data hooks
  * Polls the FastAPI backend and pushes data into the Zustand store.
- * Also updates position history on each poll for trail rendering.
+ * Also updates position history on each poll for trail rendering,
+ * and runs the anomaly scanner after each successful update.
  *
  * On each poll, dataSourceStatus is updated so the UI can show
  * per-domain staleness indicators without inspecting the data itself.
@@ -11,6 +12,7 @@
 
 import { useEffect } from 'react'
 import useStore from '../store'
+import { scanAnomalies } from '../analytics/anomalies'
 
 const BASE = '/api'
 
@@ -18,6 +20,16 @@ async function fetchJSON(path) {
   const res = await fetch(BASE + path)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+// ── Anomaly scan helper ───────────────────────────────────────
+// Reads current store state and re-runs the full anomaly scan.
+// Called after any domain update so alerts always reflect
+// the current combined state of all three domains.
+function runAnomalyScan(getState) {
+  const { aircraft, vessels, satellites, setAlerts } = getState()
+  const alerts = scanAnomalies(aircraft, vessels, satellites)
+  setAlerts(alerts)
 }
 
 // ── Aircraft — poll every 15s ─────────────────────────────────
@@ -36,23 +48,18 @@ export function useAircraftData() {
         const aircraft = data.data || []
 
         if (!initialised) {
-          // First load — populate the store fully so mergeAircraft has
-          // something to diff against on subsequent polls
           setAircraft(aircraft)
           initialised = true
         } else {
-          // Subsequent polls — only update records that actually changed.
-          // If nothing changed, the store reference is preserved and
-          // deck.gl skips the GPU buffer upload entirely.
           mergeAircraft(aircraft)
         }
 
         updatePositionHistory('aircraft', aircraft)
         setDataSourceStatus('aircraft', { ok: true, lastUpdated: Date.now() })
+        // Re-run anomaly scan with updated aircraft data
+        runAnomalyScan(useStore.getState)
       } catch (e) {
         console.warn('Aircraft fetch failed:', e.message)
-        // Pass ok:false but no lastUpdated — the store will preserve
-        // the previous lastUpdated so we can show "last seen X ago"
         setDataSourceStatus('aircraft', { ok: false })
       }
     }
@@ -73,6 +80,7 @@ export function useSatelliteData() {
         const data = await fetchJSON('/live/satellites')
         setSatellites(data.data || [])
         setDataSourceStatus('satellites', { ok: true, lastUpdated: Date.now() })
+        runAnomalyScan(useStore.getState)
       } catch (e) {
         console.warn('Satellite fetch failed:', e.message)
         setDataSourceStatus('satellites', { ok: false })
@@ -98,6 +106,7 @@ export function useVesselData() {
         setVessels(vessels)
         updatePositionHistory('vessels', vessels)
         setDataSourceStatus('vessels', { ok: true, lastUpdated: Date.now() })
+        runAnomalyScan(useStore.getState)
       } catch (e) {
         console.warn('Vessel fetch failed:', e.message)
         setDataSourceStatus('vessels', { ok: false })

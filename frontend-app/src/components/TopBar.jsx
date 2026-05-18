@@ -192,6 +192,10 @@ export default function TopBar() {
   const vessels         = useStore(s => s.vessels)
   const satellites      = useStore(s => s.satellites)
   const dataSourceStatus = useStore(s => s.dataSourceStatus)
+  const alerts          = useStore(s => s.alerts)
+
+  const highAlerts = alerts.filter(a => a.severity === 'high').length
+  const totalAlerts = alerts.length
 
   return (
     <div className="glass" style={{
@@ -241,6 +245,26 @@ export default function TopBar() {
         }}>
           v0.1
         </span>
+
+        {/* Alert count badge — only shown when alerts exist */}
+        {totalAlerts > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            marginLeft: 8, padding: '2px 7px',
+            background: highAlerts > 0 ? 'rgba(255,68,68,0.12)' : 'rgba(245,166,35,0.10)',
+            border: `1px solid ${highAlerts > 0 ? 'rgba(255,68,68,0.3)' : 'rgba(245,166,35,0.25)'}`,
+            borderRadius: 10,
+          }}>
+            <span style={{ fontSize: 9 }}>⚡</span>
+            <span style={{
+              fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              color: highAlerts > 0 ? 'var(--military)' : 'var(--aircraft)',
+              letterSpacing: '0.04em',
+            }}>
+              {totalAlerts}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Live asset counts with feed health */}

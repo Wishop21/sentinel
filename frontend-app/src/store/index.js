@@ -200,6 +200,13 @@ const useStore = create((set, get) => ({
   // visually unreadable and analytically meaningless.
   heatmapDomain: null,
   setHeatmapDomain: (domain) => set({ heatmapDomain: domain }),
+
+  // ── Anomaly alerts ────────────────────────────────────────
+  // Flat array of alert objects produced by scanAnomalies().
+  // Recomputed after each aircraft/vessel/satellite data update.
+  // Capped at 50 entries in the scanner to prevent UI flooding.
+  alerts: [],
+  setAlerts: (alerts) => set({ alerts }),
 }))
 
 export default useStore
