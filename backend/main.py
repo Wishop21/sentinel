@@ -130,17 +130,52 @@ async def metrics_country(country: str, hours: int = Query(24, ge=1, le=720)):
 # ── Analytics endpoints ────────────────────────────────────────────────────
 
 class RegionQuery(BaseModel):
-    coordinates: list[list[float]]
-    domain: str = "aircraft"
+    lat: float
+    lon: float
+    resolution: int = 3
+    hours: int = 24
 
 
 @app.post("/api/analytics/region")
 async def analytics_region(query: RegionQuery):
-    return {
-        "note": "Region analytics coming in Stage 4",
-        "received_coordinates": len(query.coordinates),
-        "domain": query.domain,
-    }
+    """
+    Resolve a click coordinate to an H3 cell and return region analytics.
+
+    Request body: { lat, lon, resolution=3, hours=24 }
+    Response:
+      - h3_index: the H3 cell identifier
+      - boundary: closed polygon of [lon, lat] pairs for rendering
+      - domains: per-domain asset counts and classification breakdown
+      - trend: first-half vs second-half delta for each domain
+    """
+    from backend.analytics.h3_query import query_region, check_h3_available
+
+    if not check_h3_available():
+        raise HTTPException(
+            503,
+            "H3 library not installed on server. Run: pip install h3"
+        )
+
+    if not (-90 <= query.lat <= 90) or not (-180 <= query.lon <= 180):
+        raise HTTPException(400, "Invalid coordinates")
+
+    if not (1 <= query.resolution <= 5):
+        raise HTTPException(400, "Resolution must be between 1 and 5")
+
+    if not (1 <= query.hours <= 168):
+        raise HTTPException(400, "Hours must be between 1 and 168")
+
+    try:
+        result = await query_region(
+            lat=query.lat,
+            lon=query.lon,
+            resolution=query.resolution,
+            hours=query.hours,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Region query failed: {e}")
+        raise HTTPException(500, f"Region query failed: {e}")
 
 
 @app.get("/api/analytics/countries")

@@ -160,6 +160,9 @@ export default function Globe() {
   const focusedAsset    = useStore(s => s.focusedAsset)
   const setFocusedAsset = useStore(s => s.setFocusedAsset)
   const clearFocus      = useStore(s => s.clearFocus)
+  const selectedRegion  = useStore(s => s.selectedRegion)
+  const setSelectedRegion = useStore(s => s.setSelectedRegion)
+  const clearRegion     = useStore(s => s.clearRegion)
 
   const rawAircraft    = useStore(s => s.aircraft)
   const rawVessels     = useStore(s => s.vessels)
@@ -238,12 +241,51 @@ export default function Globe() {
       .catch(e => console.warn('Borders GeoJSON fetch failed:', e))
   }, [])
 
-  // ESC to dismiss focus
+  // ESC to dismiss focus and region
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') clearFocus() }
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        clearFocus()
+        clearRegion()
+      }
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [clearFocus])
+  }, [clearFocus, clearRegion])
+
+  // ── Region click handler ──────────────────────────────────
+  // Fires when the user clicks empty globe space (no asset under cursor).
+  // Resolves the click coordinate to an H3 cell via the backend,
+  // sets a loading state immediately so the panel appears, then
+  // populates with results when the query returns.
+  const handleRegionClick = useCallback(async (coordinate) => {
+    if (!coordinate) return
+    const [lon, lat] = coordinate
+
+    // Show panel immediately with loading state
+    setSelectedRegion({ loading: true, h3Index: null, boundary: null, center: { lat, lon }, stats: null })
+
+    try {
+      const res = await fetch('/api/analytics/region', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lon, resolution: 3, hours: 24 }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+
+      setSelectedRegion({
+        loading:  false,
+        h3Index:  data.h3_index,
+        boundary: data.boundary,
+        center:   data.center,
+        stats:    data,
+      })
+    } catch (e) {
+      console.warn('Region query failed:', e.message)
+      setSelectedRegion({ loading: false, h3Index: null, boundary: null, center: { lat, lon }, stats: null, error: e.message })
+    }
+  }, [setSelectedRegion])
 
   const isFocused = !!focusedAsset
   const dimAlpha  = 20
@@ -259,6 +301,23 @@ export default function Globe() {
       screenY: info.y,
     })
   }, [setFocusedAsset])
+
+  // ── Ocean base sphere ─────────────────────────────────────
+  // A full-globe SolidPolygonLayer rendered first in the stack.
+  // This blocks the back hemisphere from showing through — without it,
+  // deck.gl's GlobeView renders country borders and land on the far
+  // side of the globe as transparent bleed-through.
+  // The polygon covers -180→180 lon, -90→90 lat as a single quad.
+  // Colour matches the clearColor ocean background exactly.
+  const oceanLayer = useMemo(() => new SolidPolygonLayer({
+    id: 'ocean-base',
+    data: [{ polygon: [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]] }],
+    getPolygon: d => d.polygon,
+    filled: true,
+    stroked: false,
+    getFillColor: [8, 12, 20],
+    pickable: false,
+  }), [])
 
   // ── World base layer ──────────────────────────────────────
   // GeoJsonLayer handles both Polygon and MultiPolygon natively,
@@ -455,6 +514,27 @@ export default function Globe() {
     })
   }, [focusedAsset])
 
+  // ── H3 region highlight layer ─────────────────────────────
+  // Renders the selected H3 cell as a filled hex on the globe surface.
+  // Uses a cyan accent distinct from the satellite footprint purple.
+  // Only rendered when a region is selected and boundary data is available.
+  const regionLayer = useMemo(() => {
+    if (!selectedRegion?.boundary) return null
+    return new SolidPolygonLayer({
+      id: 'h3-region',
+      data: [{ polygon: selectedRegion.boundary }],
+      getPolygon: d => d.polygon,
+      filled: true,
+      stroked: true,
+      getFillColor: [0, 212, 180, 25],
+      getLineColor: [0, 212, 180, 180],
+      getLineWidth: 1,
+      lineWidthMinPixels: 1.5,
+      pickable: false,
+      extruded: false,
+    })
+  }, [selectedRegion?.boundary])
+
   // ── Borders layer ─────────────────────────────────────────
   const bordersLayer = useMemo(() => {
     if (!layers_toggle.borders || !bordersData) return null
@@ -561,13 +641,15 @@ export default function Globe() {
   }, [cables, layers_toggle.cables])
 
   const deckLayers = [
+    oceanLayer,
     worldLayer,
     bordersLayer,
     cablesLayer,
     militaryBasesLayer,
     aircraftTrailLayer,
     vesselTrailLayer,
-    footprintLayer,   // surface disc, below orbit path and icons
+    regionLayer,       // H3 cell highlight — below footprint and icons
+    footprintLayer,
     orbitLayer,
     aircraftLayer,
     vesselLayer,
@@ -582,7 +664,12 @@ export default function Globe() {
         onViewStateChange={({ viewState: vs }) => setViewState(vs.globe ?? vs)}
         controller={true}
         layers={deckLayers}
-        onClick={info => { if (!info.object) clearFocus() }}
+        onClick={info => {
+          if (info.object) return  // asset click handled by layer onClick
+          clearFocus()
+          // info.coordinate is [lon, lat] in GlobeView on empty-space clicks
+          if (info.coordinate) handleRegionClick(info.coordinate)
+        }}
         parameters={{ clearColor: [0.031, 0.047, 0.078, 1] }}
       />
       <CameraHUD viewState={viewState} />

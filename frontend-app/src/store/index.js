@@ -180,6 +180,18 @@ const useStore = create((set, get) => ({
 
   dataQuality: [],
   setDataQuality: (q) => set({ dataQuality: q }),
+
+  // ── Selected region (H3 click-to-select) ──────────────────
+  // null when no region is selected.
+  // When set: { h3Index, boundary, center, stats, loading }
+  //   h3Index  : string — H3 cell identifier
+  //   boundary : [[lon, lat], ...] — closed ring for deck.gl rendering
+  //   center   : { lat, lon } — cell centre
+  //   stats    : full API response from /api/analytics/region, or null while loading
+  //   loading  : bool — true while the request is in flight
+  selectedRegion: null,
+  setSelectedRegion: (region) => set({ selectedRegion: region }),
+  clearRegion: () => set({ selectedRegion: null }),
 }))
 
 export default useStore
