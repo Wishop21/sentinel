@@ -261,6 +261,16 @@ export default function AssetInfoCard() {
             <Field label="GROUP"     value={data.group} />
             <Field label="ALTITUDE"  value={data.altitude_km != null ? `${data.altitude_km.toFixed(0)} km` : null} mono />
             <Field label="LAT / LON" value={data.lat != null ? `${data.lat.toFixed(2)}° / ${data.lon.toFixed(2)}°` : null} mono />
+            <Field
+              label="VISIBILITY FOOTPRINT"
+              value={data.altitude_km != null ? (() => {
+                const R = 6371
+                const rho = Math.acos(R / (R + data.altitude_km))
+                const radiusKm = Math.round(R * rho)
+                return `~${radiusKm.toLocaleString()} km radius`
+              })() : null}
+              mono
+            />
           </>
         )}
 

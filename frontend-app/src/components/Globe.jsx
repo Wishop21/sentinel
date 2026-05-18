@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DeckGL from '@deck.gl/react'
-import { ScatterplotLayer, LineLayer, IconLayer, GeoJsonLayer } from '@deck.gl/layers'
+import { ScatterplotLayer, LineLayer, IconLayer, GeoJsonLayer, SolidPolygonLayer } from '@deck.gl/layers'
 import { _GlobeView as GlobeView } from '@deck.gl/core'
 import * as satellite from 'satellite.js'
 import useStore from '../store'
@@ -82,6 +82,57 @@ function computeOrbitPath(tle1, tle2, minutesAhead = 95, steps = 120) {
     }
     return points
   } catch { return [] }
+}
+
+// ── Satellite horizon footprint ──────────────────────────────
+// Computes the visibility footprint polygon for a satellite at a given
+// altitude. The footprint is the set of surface points from which the
+// satellite is above the horizon — i.e. the precondition for any
+// line-of-sight contact (signal, imaging, observation).
+//
+// Derivation:
+//   Earth central angle ρ = arccos(R / (R + h))
+//   where R = Earth radius (km), h = satellite altitude (km)
+//   Surface radius = R × ρ (ρ in radians)
+//
+// Points are computed via the haversine great-circle formula so the
+// polygon is correct on a sphere — a flat lat/lon circle would be
+// wrong at high latitudes.
+const EARTH_RADIUS_KM = 6371
+
+function computeFootprintPolygon(lat, lon, altitudeKm, steps = 64) {
+  // Earth central angle in radians
+  const rho = Math.acos(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitudeKm))
+  // Angular radius of footprint in radians (great-circle distance / R)
+  const angularRadius = rho
+
+  const latRad = lat * (Math.PI / 180)
+  const lonRad = lon * (Math.PI / 180)
+  const ring = []
+
+  for (let i = 0; i <= steps; i++) {
+    // Counter-clockwise bearing (negative direction) produces a
+    // clockwise ring in lon/lat space, which is the correct winding
+    // order for deck.gl SolidPolygonLayer to fill the disc interior
+    // rather than its complement (the rest of the globe).
+    const bearing = -(i / steps) * 2 * Math.PI
+
+    // Haversine great-circle destination formula
+    const sinLat = Math.sin(latRad) * Math.cos(angularRadius) +
+                   Math.cos(latRad) * Math.sin(angularRadius) * Math.cos(bearing)
+    const pointLat = Math.asin(Math.max(-1, Math.min(1, sinLat)))
+
+    const y = Math.sin(bearing) * Math.sin(angularRadius) * Math.cos(latRad)
+    const x = Math.cos(angularRadius) - Math.sin(latRad) * Math.sin(pointLat)
+    const pointLon = lonRad + Math.atan2(y, x)
+
+    ring.push([
+      pointLon * (180 / Math.PI),
+      pointLat * (180 / Math.PI),
+    ])
+  }
+
+  return ring
 }
 
 // ── Build trail segments from position history ────────────────
@@ -374,6 +425,36 @@ export default function Globe() {
     })
   }, [orbitPath])
 
+  // ── Satellite visibility footprint (focused satellite) ───────
+  // Rendered as a filled disc on the Earth's surface at altitude 0.
+  // The fill is intentionally low-opacity so landmass and borders
+  // remain readable through it. The outline ring at higher opacity
+  // marks the horizon boundary clearly.
+  // Labelled "Visibility Footprint" — honest about what it represents.
+  const footprintLayer = useMemo(() => {
+    if (!focusedAsset || focusedAsset.type !== 'satellite') return null
+    const { lat, lon, altitude_km } = focusedAsset.data
+    if (lat == null || lon == null || altitude_km == null || altitude_km <= 0) return null
+
+    const ring = computeFootprintPolygon(lat, lon, altitude_km)
+    if (!ring.length) return null
+
+    return new SolidPolygonLayer({
+      id: 'satellite-footprint',
+      data: [{ polygon: ring }],
+      getPolygon: d => d.polygon,
+      filled: true,
+      stroked: true,
+      getFillColor: [168, 85, 247, 12],
+      getLineColor: [168, 85, 247, 100],
+      getLineWidth: 1,
+      lineWidthMinPixels: 1,
+      pickable: false,
+      // Rendered at elevation 0 — on the surface, beneath asset icons
+      extruded: false,
+    })
+  }, [focusedAsset])
+
   // ── Borders layer ─────────────────────────────────────────
   const bordersLayer = useMemo(() => {
     if (!layers_toggle.borders || !bordersData) return null
@@ -486,6 +567,7 @@ export default function Globe() {
     militaryBasesLayer,
     aircraftTrailLayer,
     vesselTrailLayer,
+    footprintLayer,   // surface disc, below orbit path and icons
     orbitLayer,
     aircraftLayer,
     vesselLayer,
