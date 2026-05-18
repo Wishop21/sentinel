@@ -213,3 +213,6 @@ These are stated honestly because domain reviewers will check.
 ---
 
 *Built as a portfolio project demonstrating multi-domain geospatial data fusion, real-time analytical pipelines, and WebGL-based 3D visualisation.*
+*Developed with Claude (Anthropic) as an AI pair programmer. 
+Architecture decisions, domain knowledge, code review, and 
+validation were the author's own.*
