@@ -160,6 +160,8 @@ export default function LeftPanel() {
   const setSatGroupFilter = useStore(s => s.setSatelliteGroupFilter)
   const militaryBases     = useStore(s => s.militaryBases)
   const cables            = useStore(s => s.cables)
+  const heatmapDomain     = useStore(s => s.heatmapDomain)
+  const setHeatmapDomain  = useStore(s => s.setHeatmapDomain)
 
   const milAllCount      = militaryBases.length
   const milAirfieldCount = militaryBases.filter(b => b.type === 'airfield').length
@@ -233,6 +235,48 @@ export default function LeftPanel() {
         <LayerToggle domain="mil_missiles"  label="Missile Sites"  color="#FF2222" count={milMissileCount  || null} />
         <LayerToggle domain="mil_training"  label="Training Areas" color="#AA6622" count={milTrainingCount || null} />
       </div>
+
+      {/* Divider */}
+      <div style={{ height: 1, background: 'var(--border-dim)', margin: '16px 0' }} />
+
+      {/* Section: Analytics */}
+      <div style={{ marginBottom: 20 }}>
+        <SectionLabel>ANALYTICS</SectionLabel>
+        <div style={{
+          fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
+          marginBottom: 10, lineHeight: 1.5,
+        }}>
+          Density heatmap — live asset concentration by H3 cell.
+        </div>
+
+        {/* Heatmap domain selector */}
+        {[
+          { id: 'aircraft',   label: 'Aircraft Density',   color: 'var(--aircraft)' },
+          { id: 'vessels',    label: 'Vessel Density',     color: 'var(--vessel)' },
+          { id: 'satellites', label: 'Satellite Density',  color: 'var(--satellite)' },
+        ].map(opt => (
+          <FilterChip
+            key={opt.id}
+            label={opt.label}
+            active={heatmapDomain === opt.id}
+            color={opt.color}
+            onClick={() => setHeatmapDomain(heatmapDomain === opt.id ? null : opt.id)}
+          />
+        ))}
+
+        {heatmapDomain && (
+          <div style={{
+            marginTop: 6, padding: '5px 8px',
+            background: 'rgba(255,255,255,0.02)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: 'var(--radius)',
+            fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', lineHeight: 1.5,
+          }}>
+            Scale relative to current max cell. Click again to disable.
+          </div>
+        )}
+      </div>
+
       <div>
         <SectionLabel>FILTER BY TYPE</SectionLabel>
         {CLASSIFICATIONS.map(c => (

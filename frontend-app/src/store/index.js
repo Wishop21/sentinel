@@ -192,6 +192,14 @@ const useStore = create((set, get) => ({
   selectedRegion: null,
   setSelectedRegion: (region) => set({ selectedRegion: region }),
   clearRegion: () => set({ selectedRegion: null }),
+
+  // ── Heatmap domain ────────────────────────────────────────
+  // Which domain to show as an H3 density heatmap.
+  // null = heatmap off. One of: 'aircraft' | 'vessels' | 'satellites'
+  // Only one domain shown at a time — overlaying all three would be
+  // visually unreadable and analytically meaningless.
+  heatmapDomain: null,
+  setHeatmapDomain: (domain) => set({ heatmapDomain: domain }),
 }))
 
 export default useStore

@@ -21,6 +21,7 @@ import * as satellite from 'satellite.js'
 import useStore from '../store'
 import { ICON_ATLAS, getAircraftIcon, getAircraftColor, getVesselColor } from '../layers/icons'
 import { fetchMilitaryBases, getMilitaryBaseColor } from '../layers/militaryBases'
+import { computeH3Density, applyDensityColors } from '../layers/h3Density'
 
 // ── Constants ────────────────────────────────────────────────
 const INITIAL_VIEW_STATE = {
@@ -163,6 +164,7 @@ export default function Globe() {
   const selectedRegion  = useStore(s => s.selectedRegion)
   const setSelectedRegion = useStore(s => s.setSelectedRegion)
   const clearRegion     = useStore(s => s.clearRegion)
+  const heatmapDomain   = useStore(s => s.heatmapDomain)
 
   const rawAircraft    = useStore(s => s.aircraft)
   const rawVessels     = useStore(s => s.vessels)
@@ -514,6 +516,44 @@ export default function Globe() {
     })
   }, [focusedAsset])
 
+  // ── H3 density heatmap layer ──────────────────────────────
+  // Computed from live asset data on every poll update.
+  // Only one domain shown at a time — controlled by heatmapDomain
+  // in the store. Uses square-root normalisation so moderate-density
+  // cells aren't washed out by a handful of extreme hotspots.
+  // Rendered below the region highlight and all asset icons.
+  const heatmapLayer = useMemo(() => {
+    if (!heatmapDomain) return null
+
+    // Select the correct live dataset
+    const assetMap = {
+      aircraft:   { data: rawAircraft,   latKey: 'lat', lonKey: 'lon' },
+      vessels:    { data: rawVessels,    latKey: 'lat', lonKey: 'lon' },
+      satellites: { data: rawSatellites, latKey: 'lat', lonKey: 'lon' },
+    }
+    const source = assetMap[heatmapDomain]
+    if (!source || !source.data.length) return null
+
+    const density = computeH3Density(source.data, source.latKey, source.lonKey)
+    const coloured = applyDensityColors(density)
+    if (!coloured.length) return null
+
+    return new SolidPolygonLayer({
+      id: 'h3-heatmap',
+      data: coloured,
+      getPolygon: d => d.polygon,
+      filled: true,
+      stroked: false,
+      getFillColor: d => d.color,
+      pickable: false,
+      extruded: false,
+      // Recompute whenever the source data or selected domain changes
+      updateTriggers: {
+        getFillColor: [heatmapDomain, rawAircraft.length, rawVessels.length, rawSatellites.length],
+      },
+    })
+  }, [heatmapDomain, rawAircraft, rawVessels, rawSatellites])
+
   // ── H3 region highlight layer ─────────────────────────────
   // Renders the selected H3 cell as a filled hex on the globe surface.
   // Uses a cyan accent distinct from the satellite footprint purple.
@@ -646,9 +686,10 @@ export default function Globe() {
     bordersLayer,
     cablesLayer,
     militaryBasesLayer,
+    heatmapLayer,      // density heatmap — above static layers, below assets
     aircraftTrailLayer,
     vesselTrailLayer,
-    regionLayer,       // H3 cell highlight — below footprint and icons
+    regionLayer,
     footprintLayer,
     orbitLayer,
     aircraftLayer,
