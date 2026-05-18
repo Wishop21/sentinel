@@ -23,15 +23,30 @@ async function fetchJSON(path) {
 // ── Aircraft — poll every 15s ─────────────────────────────────
 export function useAircraftData() {
   const setAircraft           = useStore(s => s.setAircraft)
+  const mergeAircraft         = useStore(s => s.mergeAircraft)
   const updatePositionHistory = useStore(s => s.updatePositionHistory)
   const setDataSourceStatus   = useStore(s => s.setDataSourceStatus)
 
   useEffect(() => {
+    let initialised = false
+
     const poll = async () => {
       try {
         const data = await fetchJSON('/live/aircraft')
         const aircraft = data.data || []
-        setAircraft(aircraft)
+
+        if (!initialised) {
+          // First load — populate the store fully so mergeAircraft has
+          // something to diff against on subsequent polls
+          setAircraft(aircraft)
+          initialised = true
+        } else {
+          // Subsequent polls — only update records that actually changed.
+          // If nothing changed, the store reference is preserved and
+          // deck.gl skips the GPU buffer upload entirely.
+          mergeAircraft(aircraft)
+        }
+
         updatePositionHistory('aircraft', aircraft)
         setDataSourceStatus('aircraft', { ok: true, lastUpdated: Date.now() })
       } catch (e) {

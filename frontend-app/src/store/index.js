@@ -46,9 +46,57 @@ const useStore = create((set, get) => ({
   vessels:    [],
   satellites: [],
 
+  // Full replacement — used on first load when the store is empty.
   setAircraft:   (data) => set({ aircraft: data }),
   setVessels:    (data) => set({ vessels: data }),
   setSatellites: (data) => set({ satellites: data }),
+
+  // ── Aircraft delta merge ───────────────────────────────────
+  // Called on every poll after the initial load. Diffs incoming records
+  // against the current store by icao24 + last_contact. Only records
+  // that have a new last_contact (i.e. actually moved or updated) are
+  // replaced. Records present in the store but absent from the new
+  // payload are removed (aircraft that landed or left coverage).
+  //
+  // Critically: if the merged result is identical in length and no
+  // records changed, the existing array reference is returned unchanged.
+  // This means deck.gl's useMemo dependency on `aircraft` does not fire,
+  // and no GPU buffer upload occurs for that poll cycle.
+  mergeAircraft: (incoming) => set(state => {
+    const prev = state.aircraft
+
+    // Index current state by icao24 for O(1) lookup
+    const prevMap = new Map(prev.map(a => [a.icao24, a]))
+
+    let changed = false
+
+    // Check for removals — aircraft in store but not in new payload
+    if (prev.length !== incoming.length) changed = true
+
+    // Build merged array. For each incoming record, use the new version
+    // only if last_contact has advanced; otherwise keep the existing object
+    // reference so the array slot is stable.
+    const merged = incoming.map(next => {
+      const existing = prevMap.get(next.icao24)
+      if (!existing) {
+        changed = true
+        return next
+      }
+      // last_contact is a Unix timestamp from OpenSky — unchanged means
+      // the state vector is stale and the aircraft hasn't moved
+      if (existing.last_contact !== next.last_contact) {
+        changed = true
+        return next
+      }
+      return existing  // same reference — no change
+    })
+
+    // If nothing changed, return the existing state reference unchanged.
+    // Zustand will see the same aircraft reference and skip a re-render.
+    if (!changed) return state
+
+    return { aircraft: merged }
+  }),
 
   // ── Undersea cables (fetched once on first toggle) ────────
   cables: [],
